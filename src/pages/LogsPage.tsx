@@ -1,5 +1,4 @@
 import { useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef } from "react";
-import type { ChangeEvent, ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { logApi, channelApi } from "../lib/api";
 import type { DeleteLogsInput, DeleteLogsReport, CleanupChannelInput, CleanupChannelReport } from "../lib/api";
@@ -8,6 +7,7 @@ import type { RequestLog, SecurityFinding } from "../types";
 import { formatTime, formatDuration, formatNumber } from "../lib/constants";
 import { writeClipboard } from "../lib/runtime";
 import { contentToString, requestLogSource, responseLogSource } from "../lib/auditLog";
+import { Select, type SelectOption } from "../components/Select";
 import AuditTextPanel from "../components/logs/AuditTextPanel";
 import AuditToolCall from "../components/logs/AuditToolCall";
 import {
@@ -590,18 +590,19 @@ export function LogsPage() {
                 className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
               />
             </div>
-            <div className="relative">
+            <div>
               <Server size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-              <select
-                aria-label="来源类型"
+              <Select
+                ariaLabel="来源类型"
                 value={filterUpstreamType}
-                onChange={(e) => { setFilterUpstreamType(e.target.value as "" | "channel" | "auth_account"); setPage(0); }}
-                className="w-full appearance-none bg-white pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-              >
-                <option value="">全部来源</option>
-                <option value="channel">API 渠道</option>
-                <option value="auth_account">Auth 账号</option>
-              </select>
+                onChange={(v) => { setFilterUpstreamType(v as "" | "channel" | "auth_account"); setPage(0); }}
+                className="pl-9"
+                options={[
+                  { value: "", label: "全部来源" },
+                  { value: "channel", label: "API 渠道" },
+                  { value: "auth_account", label: "Auth 账号" },
+                ]}
+              />
             </div>
             {/* Trace ID filter */}
             <div className="relative">
@@ -1842,25 +1843,15 @@ function LogDetail({ log }: { log: RequestLog }) {
 
 // ─── CleanLogsModal(第一步:条件选择,含「清理日志/渠道清理」双 tab)──────────
 
-// 弹窗内下拉框:appearance-none 去掉 macOS 原生控件外观,右侧统一渲染
-// ChevronDown,与页面筛选器/全局输入框风格保持一致。
-function ModalSelect({ value, onChange, children }: {
+// 弹窗内下拉框:统一使用全局 Select 组件（components/Select.tsx）,
+// 与页面筛选器/全局输入框风格保持一致。
+function ModalSelect({ value, onChange, options, placeholder }: {
   value: string;
-  onChange: (e: ChangeEvent<HTMLSelectElement>) => void;
-  children: ReactNode;
+  onChange: (v: string) => void;
+  options: SelectOption[];
+  placeholder?: string;
 }) {
-  return (
-    <div className="relative">
-      <select
-        value={value}
-        onChange={onChange}
-        className="w-full appearance-none px-3 py-2 pr-9 text-sm rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-      >
-        {children}
-      </select>
-      <ChevronDown size={14} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
-    </div>
-  );
+  return <Select size="sm" value={value} onChange={onChange} options={options} placeholder={placeholder} />;
 }
 
 function CleanLogsModal({
@@ -1940,30 +1931,40 @@ function CleanLogsForm({
     <div className="space-y-3">
       <div>
         <label className="mb-1 block text-xs font-medium text-slate-600">时间范围</label>
-        <ModalSelect value={retention} onChange={e => setRetention(e.target.value)}>
-          <option value="">清理全部日志</option>
-          <option value={1}>保留最近 1 天（清理更早的）</option>
-          <option value={7}>保留最近 7 天（清理更早的）</option>
-          <option value={30}>保留最近 30 天（清理更早的）</option>
-          <option value={90}>保留最近 90 天（清理更早的）</option>
-        </ModalSelect>
+        <ModalSelect
+          value={retention}
+          onChange={v => setRetention(v)}
+          options={[
+            { value: "", label: "清理全部日志" },
+            { value: "1", label: "保留最近 1 天（清理更早的）" },
+            { value: "7", label: "保留最近 7 天（清理更早的）" },
+            { value: "30", label: "保留最近 30 天（清理更早的）" },
+            { value: "90", label: "保留最近 90 天（清理更早的）" },
+          ]}
+        />
       </div>
       <div>
         <label className="mb-1 block text-xs font-medium text-slate-600">请求结果（可选）</label>
-        <ModalSelect value={isSuccess} onChange={e => setIsSuccess(e.target.value)}>
-          <option value="">全部结果</option>
-          <option value="success">仅成功（2xx）</option>
-          <option value="failed">仅失败（非 2xx）</option>
-        </ModalSelect>
+        <ModalSelect
+          value={isSuccess}
+          onChange={v => setIsSuccess(v)}
+          options={[
+            { value: "", label: "全部结果" },
+            { value: "success", label: "仅成功（2xx）" },
+            { value: "failed", label: "仅失败（非 2xx）" },
+          ]}
+        />
       </div>
       <div>
         <label className="mb-1 block text-xs font-medium text-slate-600">目标渠道（可选）</label>
-        <ModalSelect value={channelId} onChange={e => setChannelId(e.target.value)}>
-          <option value="">全部渠道</option>
-          {channels.map(ch => (
-            <option key={ch.id} value={ch.id}>{ch.name}（{ch.id}）</option>
-          ))}
-        </ModalSelect>
+        <ModalSelect
+          value={channelId}
+          onChange={v => setChannelId(v)}
+          options={[
+            { value: "", label: "全部渠道" },
+            ...channels.map(ch => ({ value: ch.id, label: `${ch.name}（${ch.id}）` })),
+          ]}
+        />
       </div>
       <label className="flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 cursor-pointer">
         <input type="checkbox" checked={clearStats} onChange={e => setClearStats(e.target.checked)} className="mt-0.5" />
@@ -2011,22 +2012,26 @@ function CleanChannelForm({
     <div className="space-y-3">
       <div>
         <label className="mb-1 block text-xs font-medium text-slate-600">目标渠道</label>
-        <ModalSelect value={channelId} onChange={e => setChannelId(e.target.value)}>
-          <option value="">请选择渠道…</option>
-          {channels.map(ch => (
-            <option key={ch.id} value={ch.id}>{ch.name}（{ch.id}）</option>
-          ))}
-        </ModalSelect>
+        <ModalSelect
+          value={channelId}
+          onChange={v => setChannelId(v)}
+          placeholder="请选择渠道…"
+          options={channels.map(ch => ({ value: ch.id, label: `${ch.name}（${ch.id}）` }))}
+        />
       </div>
       <div>
         <label className="mb-1 block text-xs font-medium text-slate-600">时间范围</label>
-        <ModalSelect value={retention} onChange={e => setRetention(e.target.value)}>
-          <option value="">全部时间</option>
-          <option value={1}>保留最近 1 天（清理更早的）</option>
-          <option value={7}>保留最近 7 天（清理更早的）</option>
-          <option value={30}>保留最近 30 天（清理更早的）</option>
-          <option value={90}>保留最近 90 天（清理更早的）</option>
-        </ModalSelect>
+        <ModalSelect
+          value={retention}
+          onChange={v => setRetention(v)}
+          options={[
+            { value: "", label: "全部时间" },
+            { value: "1", label: "保留最近 1 天（清理更早的）" },
+            { value: "7", label: "保留最近 7 天（清理更早的）" },
+            { value: "30", label: "保留最近 30 天（清理更早的）" },
+            { value: "90", label: "保留最近 90 天（清理更早的）" },
+          ]}
+        />
       </div>
       <div className="space-y-2">
         <label className="flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 cursor-pointer">

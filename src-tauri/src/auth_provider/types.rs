@@ -17,6 +17,7 @@ pub enum ProviderKind {
     Kimi,
     Gemini,
     Grok,
+    WorkBuddy,
     Other(String),
 }
 
@@ -27,6 +28,7 @@ impl ProviderKind {
             Self::Kimi => "kimi",
             Self::Gemini => "gemini",
             Self::Grok => "grok",
+            Self::WorkBuddy => "workbuddy",
             Self::Other(value) => value,
         }
     }
@@ -39,6 +41,7 @@ impl From<&str> for ProviderKind {
             "kimi" => Self::Kimi,
             "gemini" => Self::Gemini,
             "grok" => Self::Grok,
+            "workbuddy" => Self::WorkBuddy,
             other => Self::Other(other.to_owned()),
         }
     }

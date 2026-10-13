@@ -1,4 +1,5 @@
 import { KnowledgeConnectionPanel } from "../components/KnowledgeConnectionPanel";
+import { Select } from "../components/Select";
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { Link as RouterLink, useLocation } from "react-router-dom";
 import {
@@ -2628,15 +2629,12 @@ function SettingsTab({ kb, onUpdated }: { kb: KnowledgeBase; onUpdated: (kb: Kno
         <div className="space-y-4">
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">Embedding 模型</label>
-            <select
+            <Select
               value={embeddingModel}
-              onChange={(e) => setEmbeddingModel(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-            >
-              {embeddingOptions.map((m) => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
+              onChange={(v) => setEmbeddingModel(v)}
+              size="sm"
+              options={embeddingOptions.map((m) => ({ value: m, label: m }))}
+            />
             <p className="mt-1 text-xs text-slate-400">
               默认提供 OpenAI 系模型，已配置渠道声明的模型也会出现在列表中；请确保所选渠道支持 /embeddings 接口（DeepSeek 不提供 Embedding）
             </p>
@@ -2724,17 +2722,16 @@ function SettingsTab({ kb, onUpdated }: { kb: KnowledgeBase; onUpdated: (kb: Kno
         <div className="space-y-4">
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">OCR 视觉模型</label>
-            <select
+            <Select
               value={ocrModel}
               disabled={!ocrEnabled}
-              onChange={(e) => setOcrModel(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
-            >
-              <option value="">不启用（默认）</option>
-              {ocrModelOptions.map((m) => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
+              onChange={(v) => setOcrModel(v)}
+              size="sm"
+              options={[
+                { value: "", label: "不启用（默认）" },
+                ...ocrModelOptions.map((m) => ({ value: m, label: m })),
+              ]}
+            />
             <p className="mt-1 text-xs text-slate-400">
               {ocrEnabled
                 ? "用于识别扫描版 PDF，需有渠道声明支持该视觉模型（如 qwen-vl-max / glm-4v-flash）；留空则不启用"
@@ -3115,15 +3112,12 @@ function CreateKbModal({
 
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">Embedding 模型</label>
-            <select
+            <Select
               value={embeddingModel}
-              onChange={(e) => setEmbeddingModel(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-            >
-              {embeddingOptions.map((m) => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
+              onChange={(v) => setEmbeddingModel(v)}
+              size="sm"
+              options={embeddingOptions.map((m) => ({ value: m, label: m }))}
+            />
             <p className="mt-1 text-xs text-slate-400">
               默认提供 OpenAI 系模型，已配置渠道声明的模型也会出现在列表中；请确保所选渠道支持 /embeddings 接口（DeepSeek 不提供 Embedding）
             </p>
@@ -3131,17 +3125,16 @@ function CreateKbModal({
 
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">OCR 视觉模型（可选）</label>
-            <select
+            <Select
               value={ocrModel}
               disabled={!ocrEnabled}
-              onChange={(e) => setOcrModel(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
-            >
-              <option value="">不启用（默认）</option>
-              {visionModelOptions.map((m) => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
+              onChange={(v) => setOcrModel(v)}
+              size="sm"
+              options={[
+                { value: "", label: "不启用（默认）" },
+                ...visionModelOptions.map((m) => ({ value: m, label: m })),
+              ]}
+            />
             <p className="mt-1 text-xs text-slate-400">
               {ocrEnabled
                 ? "用于识别扫描版 PDF，需有渠道声明支持该视觉模型；留空则不启用"

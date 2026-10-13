@@ -802,6 +802,13 @@ fn profile_for_model_state(provider: &str, protocol: Option<&str>) -> Option<Aut
             upstream_endpoint: "responses".into(),
             non_stream_framing: AuthNonStreamFraming::ForcedResponsesSse,
         }),
+        ("workbuddy", "openai") => Some(AuthRouteProfile {
+            provider: "workbuddy".into(),
+            native_base_url: "https://copilot.tencent.com".into(),
+            upstream_protocol: UpstreamProtocol::OpenAI,
+            upstream_endpoint: "chat_completions".into(),
+            non_stream_framing: AuthNonStreamFraming::Json,
+        }),
         // Unknown provider or unknown non-empty Kimi protocol: fail closed.
         _ => None,
     }

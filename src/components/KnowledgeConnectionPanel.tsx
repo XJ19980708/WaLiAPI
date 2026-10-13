@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { apiKeyApi, type KnowledgeHealthTest } from "../lib/api";
 import type { ApiKey } from "../types";
 import { writeClipboard } from "../lib/runtime";
+import { Select } from "./Select";
 
 export function KnowledgeConnectionPanel({ kbId }: { kbId: string }) {
   const [keys, setKeys] = useState<ApiKey[]>([]);
@@ -80,10 +81,16 @@ export function KnowledgeConnectionPanel({ kbId }: { kbId: string }) {
       <p className="font-semibold">API Key 授权</p>
       <p className="text-xs text-slate-500">新建密钥默认授权全部现有 RAG，新建 RAG 默认授权全部已有密钥。可在<Link to="/api-keys" className="text-blue-600 underline">密钥 → 知识库查询权限</Link>中调整，再使用已授权的 API Key 连接 REST 或 MCP，无需设置环境变量 Token。</p>
       <div className="flex flex-wrap gap-2">
-        <select aria-label="已授权的 API Key" value={keyId} disabled={loading || testing} onChange={e => { setKeyId(e.target.value); setModel(""); setMessage(""); setError(""); setHealth(null); }} className="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2">
-          {!keys.length && <option value="">{loading ? "正在加载…" : "尚无已授权的 API Key"}</option>}
-          {keys.map(key => <option key={key.id} value={key.id}>{key.name} · {key.key}</option>)}
-        </select>
+        <Select
+          ariaLabel="已授权的 API Key"
+          value={keyId}
+          disabled={loading || testing}
+          onChange={v => { setKeyId(v); setModel(""); setMessage(""); setError(""); setHealth(null); }}
+          size="sm"
+          className="min-w-0 flex-1"
+          placeholder={loading ? "正在加载…" : "尚无已授权的 API Key"}
+          options={keys.map(key => ({ value: key.id, label: `${key.name} · ${key.key}` }))}
+        />
         <button className="action-secondary" onClick={load} disabled={loading || testing}>刷新</button>
         <button className="action-secondary" onClick={copy} disabled={!keyId || loading || testing}>复制 API Key</button>
         <button className="action-primary disabled:opacity-50" onClick={test} disabled={!keyId || loading || testing}>{testing ? "检查中…" : "测试授权连接"}</button>
@@ -96,18 +103,32 @@ export function KnowledgeConnectionPanel({ kbId }: { kbId: string }) {
           {manualModel ? (
             <input aria-label="检测回答模型" placeholder="输入客户端实际使用的回答模型名称" value={model} disabled={testing} onChange={e => { setModel(e.target.value); setHealth(null); }} className="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2" />
           ) : (
-            <select aria-label="检测回答模型" value={selectedModel} disabled={testing || loading || modelsLoading || !keyId} onChange={e => { setModel(e.target.value); setHealth(null); }} className="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2">
-              <option value="">{modelsLoading ? "正在加载可用回答模型…" : "请选择回答模型"}</option>
-              {models.map(name => <option key={name} value={name}>{name}</option>)}
-            </select>
+            <Select
+              ariaLabel="检测回答模型"
+              value={selectedModel}
+              disabled={testing || loading || modelsLoading || !keyId}
+              onChange={v => { setModel(v); setHealth(null); }}
+              size="sm"
+              className="min-w-0 flex-1"
+              placeholder={modelsLoading ? "正在加载可用回答模型…" : "请选择回答模型"}
+              options={models.map(name => ({ value: name, label: name }))}
+            />
           )}
           <button type="button" className="action-secondary" disabled={testing} onClick={() => { setManualModel(!manualModel); setHealth(null); }}>{manualModel ? "选择模型" : "手动输入"}</button>
           <button type="button" className="action-secondary" disabled={testing || loading || modelsLoading || !keyId} onClick={() => { setModelRefresh(value => value + 1); setHealth(null); }}>刷新模型</button>
-          <select aria-label="检测检索模式" value={searchMode} disabled={testing} onChange={e => { setSearchMode(e.target.value); setHealth(null); }} className="rounded-lg border border-slate-200 px-3 py-2">
-            <option value="hybrid">混合检索（含 Embedding）</option>
-            <option value="vector">向量检索（含 Embedding）</option>
-            <option value="keyword">关键词检索（跳过 Embedding）</option>
-          </select>
+          <Select
+            ariaLabel="检测检索模式"
+            value={searchMode}
+            disabled={testing}
+            onChange={v => { setSearchMode(v); setHealth(null); }}
+            size="sm"
+            fullWidthList={false}
+            options={[
+              { value: "hybrid", label: "混合检索（含 Embedding）" },
+              { value: "vector", label: "向量检索（含 Embedding）" },
+              { value: "keyword", label: "关键词检索（跳过 Embedding）" },
+            ]}
+          />
         </div>
         {modelsError ? (
           <p role="status" className="text-xs text-amber-700">模型列表加载失败：{modelsError}。可刷新重试，或手动输入回答模型名称。</p>

@@ -8,6 +8,7 @@ const iconFor = (key: string): string => {
   if (key === "moonshot") return "☾";
   if (key === "google") return "G";
   if (key === "grok") return "✦";
+  if (key === "workbuddy") return "W";
   return "◎";
 };
 

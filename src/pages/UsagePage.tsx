@@ -10,9 +10,10 @@ import { activeMappingFroms } from "../hooks/useModelMappings";
 import { AppConfigPanel, getAppIcon } from "./AppConfigPage";
 import {
   BookOpen, Copy, Check, Play, Loader2, Link2, KeyRound, Bot,
-  ChevronDown, Terminal, Code2, Coffee, Zap, ArrowRight,
+  Terminal, Code2, Coffee, Zap, ArrowRight,
   MessageSquare, Layers, Sparkles, AlertCircle,
 } from "lucide-react";
+import { Select } from "../components/Select";
 
 type Platform = "curl-mac" | "curl-windows" | "javascript" | "typescript" | "java";
 type TestState = "idle" | "running" | "success" | "error";
@@ -636,19 +637,17 @@ public class AnthropicTest {
               </div>
               <div className="flex gap-2">
                 <div className="relative flex-1">
-                  <select
+                  <Select
+                    size="sm"
                     value={selKey}
-                    onChange={e => {
-                      setSelKey(e.target.value);
-                      sessionStorage.setItem(keyStorageKey, e.target.value);
+                    onChange={v => {
+                      setSelKey(v);
+                      sessionStorage.setItem(keyStorageKey, v);
                       // selModel validity will be checked by the models useMemo + effect below.
                     }}
-                    className="w-full appearance-none rounded-xl border border-slate-200 bg-white px-3 py-2.5 pr-8 text-sm font-mono text-slate-900 shadow-sm cursor-pointer"
-                  >
-                    {keys.length === 0 && <option value="">请先创建密钥</option>}
-                    {keys.map(k => <option key={k.id} value={k.id}>{k.name} ({k.key})</option>)}
-                  </select>
-                  <ChevronDown size={14} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                    placeholder="请先创建密钥"
+                    options={keys.map(k => ({ value: k.id, label: `${k.name} (${k.key})` }))}
+                  />
                 </div>
                 {/* 完整密钥已随选中自动载入，此处一键复制 */}
                 <button
@@ -680,26 +679,27 @@ public class AnthropicTest {
               </div>
               <div className="flex gap-2">
                 <div className="relative flex-1">
-                  <select
+                  <Select
+                    size="sm"
                     value={selModel}
-                    onChange={e => {
-                      setSelModel(e.target.value);
-                      localStorage.setItem(modelStorageKey, e.target.value);
+                    onChange={v => {
+                      setSelModel(v);
+                      localStorage.setItem(modelStorageKey, v);
                     }}
-                    className="w-full appearance-none rounded-xl border border-slate-200 bg-white px-3 py-2.5 pr-8 text-sm font-mono text-slate-900 shadow-sm cursor-pointer"
-                  >
-                    {models.length === 0 && <option value="">请先配置渠道或登录账号</option>}
-                    {modelCategories.channel.length > 0 && (
-                      <optgroup label="API 渠道模型">{modelCategories.channel.map(m => <option key={m} value={m}>{m}</option>)}</optgroup>
-                    )}
-                    {modelCategories.auth.length > 0 && (
-                      <optgroup label="Auth 账号模型">{modelCategories.auth.map(m => <option key={m} value={m}>{m}</option>)}</optgroup>
-                    )}
-                    {modelCategories.mapping.length > 0 && (
-                      <optgroup label="映射模型">{modelCategories.mapping.map(m => <option key={m} value={m}>{m}</option>)}</optgroup>
-                    )}
-                  </select>
-                  <ChevronDown size={14} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                    placeholder="请先配置渠道或登录账号"
+                    options={[
+                      ...(models.length === 0 ? [{ value: "", label: "请先配置渠道或登录账号" }] : []),
+                      ...(modelCategories.channel.length > 0
+                        ? [{ value: "__h_channel", label: "API 渠道模型", heading: true }, ...modelCategories.channel.map(m => ({ value: m, label: m }))]
+                        : []),
+                      ...(modelCategories.auth.length > 0
+                        ? [{ value: "__h_auth", label: "Auth 账号模型", heading: true }, ...modelCategories.auth.map(m => ({ value: m, label: m }))]
+                        : []),
+                      ...(modelCategories.mapping.length > 0
+                        ? [{ value: "__h_mapping", label: "映射模型", heading: true }, ...modelCategories.mapping.map(m => ({ value: m, label: m }))]
+                        : []),
+                    ]}
+                  />
                 </div>
                 <button onClick={() => selModel && copy(selModel, "model")} disabled={!selModel} className="action-secondary px-3 py-2.5 disabled:opacity-50" title="复制 Model">
                   {copied === "model" ? <Check size={16} className="text-emerald-600" /> : <Copy size={16} />}

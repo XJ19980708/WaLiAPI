@@ -13,6 +13,8 @@ pub mod maintenance;
 pub mod service;
 pub mod spec;
 pub mod types;
+pub mod workbuddy_backend;
+pub mod workbuddy_login;
 
 use async_trait::async_trait;
 use std::{collections::HashMap, sync::Arc};
@@ -199,6 +201,7 @@ impl Default for ProviderRegistry {
         registry.register(Arc::new(kimi_backend::KimiProvider::new()));
         registry.register(Arc::new(gemini_backend::GeminiProvider::new()));
         registry.register(Arc::new(grok_backend::GrokProvider::new()));
+        registry.register(Arc::new(workbuddy_backend::WorkBuddyProvider::new()));
         registry
     }
 }

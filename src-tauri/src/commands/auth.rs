@@ -504,9 +504,11 @@ fn provider_kind(provider: Option<String>) -> Result<ProviderKind, String> {
     let provider = provider.unwrap_or_else(|| "codex".to_owned());
     let kind = ProviderKind::from(provider.trim());
     match kind {
-        ProviderKind::Codex | ProviderKind::Kimi | ProviderKind::Gemini | ProviderKind::Grok => {
-            Ok(kind)
-        }
+        ProviderKind::Codex
+        | ProviderKind::Kimi
+        | ProviderKind::Gemini
+        | ProviderKind::Grok
+        | ProviderKind::WorkBuddy => Ok(kind),
         ProviderKind::Other(_) => Err("Unsupported auth provider".to_owned()),
     }
 }

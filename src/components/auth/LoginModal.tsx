@@ -54,6 +54,13 @@ const grokSteps = [
   "同步模型",
 ];
 
+const workbuddySteps = [
+  "准备 WorkBuddy 登录",
+  "打开 WorkBuddy 授权页",
+  "在浏览器确认登录",
+  "获取账号与模型",
+];
+
 const codexDeviceSteps = [
   "申请设备授权",
   "打开 OpenAI 授权页",
@@ -105,7 +112,13 @@ export function LoginModal({
   );
   const isDevice = loginMethod === "device_code";
   const steps = isDevice
-    ? provider.id === "kimi" ? kimiSteps : provider.id === "grok" ? grokSteps : codexDeviceSteps
+    ? provider.id === "kimi"
+      ? kimiSteps
+      : provider.id === "grok"
+        ? grokSteps
+        : provider.id === "workbuddy"
+          ? workbuddySteps
+          : codexDeviceSteps
     : provider.id === "gemini" ? geminiSteps : codexSteps;
   const isDesktop = isTauriRuntime();
 
@@ -194,11 +207,17 @@ export function LoginModal({
       </div>}
       {loginMethod && <>
       <ol className="mt-5 space-y-3" aria-label="登录步骤">{steps.map((step, index) => { const complete = state === "done" || index < currentStep; const active = state === "running" && index === currentStep; return <li key={step} className="flex items-center gap-3 rounded-xl border border-border bg-muted/35 px-3 py-2.5 text-sm"><span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${complete ? "bg-success text-white" : active ? "bg-primary text-primary-foreground" : "bg-card text-muted-foreground"}`}>{complete ? <Check size={14} /> : active ? <Loader2 size={14} className="animate-spin" /> : index + 1}</span><span className={active ? "font-medium" : "text-muted-foreground"}>{step}</span></li>; })}</ol>
-      {isDevice && verification && state === "running" && <div className="mt-4 space-y-3 rounded-xl border border-border bg-muted/35 p-4">
+      {isDevice && verification && state === "running" && provider.id !== "workbuddy" && <div className="mt-4 space-y-3 rounded-xl border border-border bg-muted/35 p-4">
         <div className="flex items-center justify-between gap-3"><div><p className="text-xs font-medium text-muted-foreground">授权码（请勿发送给他人）</p><p className="mt-1 font-mono text-2xl font-bold tracking-widest">{verification.userCode}</p></div><button onClick={() => void copyUserCode()} className="action-secondary px-2 py-2 text-xs">{copied ? <Check size={14} /> : <Copy size={14} />}{copied ? "已复制" : "复制授权码"}</button></div>
         <div className="space-y-1.5"><p className="text-xs font-medium text-muted-foreground">授权地址</p><p className="break-all font-mono text-xs text-primary">{verification.url}</p></div>
         <button onClick={reopenBrowser} className="action-secondary w-full justify-center px-2 py-2 text-xs"><RefreshCw size={14} />重新打开授权页</button>
         {verification.expiresAt && <p className="text-[11px] text-muted-foreground">授权码有效期至 {new Date(verification.expiresAt).toLocaleString("zh-CN")}</p>}
+      </div>}
+
+      {isDevice && verification && state === "running" && provider.id === "workbuddy" && <div className="mt-4 space-y-3 rounded-xl border border-border bg-muted/35 p-4">
+        <div className="space-y-1.5"><p className="text-xs font-medium text-muted-foreground">授权地址</p><p className="break-all font-mono text-xs text-primary">{verification.url}</p></div>
+        <p className="text-xs leading-5 text-muted-foreground">登录成功后请先停留在 WorkBuddy 成功页；若它跳到桌面端，点“重新打开授权页”再完成一次。</p>
+        <button onClick={reopenBrowser} className="action-secondary w-full justify-center px-2 py-2 text-xs"><RefreshCw size={14} />重新打开授权页</button>
       </div>}
 
       {state === "running" && !isDevice && <p className="mt-4 flex items-center gap-2 rounded-xl bg-primary/10 px-3 py-2.5 text-sm text-primary"><ExternalLink size={15} />已在浏览器打开授权页，请完成授权；回调后应用会继续交换令牌和保存账号</p>}

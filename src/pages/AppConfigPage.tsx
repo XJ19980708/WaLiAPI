@@ -6,6 +6,7 @@ import { appConfigApi, serverApi, apiKeyApi, channelApi, authApi } from "../lib/
 import type { AppInfo, ConfigContent } from "../lib/api";
 import type { ServerStatus, Channel, ApiKey, AuthAccount } from "../types";
 import { makeKeyGuards } from "../lib/keyRules";
+import { Select } from "../components/Select";
 import { activeMappingFroms } from "../hooks/useModelMappings";
 import {
   Terminal,
@@ -22,7 +23,6 @@ import {
   FolderOpen,
   FileText,
   KeyRound,
-  ChevronDown,
   Link2,
   Download,
   Copy,
@@ -334,18 +334,16 @@ export function AppConfigPanel({ appName }: { appName: string }) {
               <KeyRound size={11} /> API Key
             </div>
             <div className="relative">
-              <select
+              <Select
+                size="sm"
                 value={selKey}
-                onChange={e => {
-                  setSelKey(e.target.value);
-                  sessionStorage.setItem(keyStorageKey, e.target.value);
+                onChange={v => {
+                  setSelKey(v);
+                  sessionStorage.setItem(keyStorageKey, v);
                 }}
-                className="w-full appearance-none rounded-xl border border-slate-200 bg-white px-3 py-2.5 pr-8 text-sm font-mono text-slate-900 shadow-sm cursor-pointer"
-              >
-                {keys.length === 0 && <option value="">请先创建密钥</option>}
-                {keys.map(k => <option key={k.id} value={k.id}>{k.name} ({k.key})</option>)}
-              </select>
-              <ChevronDown size={14} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                placeholder="请先创建密钥"
+                options={keys.map(k => ({ value: k.id, label: `${k.name} (${k.key})` }))}
+              />
             </div>
             {keys.length === 0 && (
               <div className="mt-2 flex items-center gap-1.5 text-xs text-rose-500">
@@ -363,27 +361,24 @@ export function AppConfigPanel({ appName }: { appName: string }) {
               <Bot size={11} /> Model
             </div>
             <div className="relative">
-              <select
+              <Select
+                size="sm"
                 value={selModel}
-                onChange={e => {
-                  setSelModel(e.target.value);
-                  localStorage.setItem(modelStorageKey, e.target.value);
+                onChange={v => {
+                  setSelModel(v);
+                  localStorage.setItem(modelStorageKey, v);
                 }}
-                className="w-full appearance-none rounded-xl border border-slate-200 bg-white px-3 py-2.5 pr-8 text-sm font-mono text-slate-900 shadow-sm cursor-pointer"
-              >
-                {allModels.length === 0 && <option value="">请先配置渠道</option>}
-                {modelList.real.length > 0 && (
-                  <optgroup label="实际模型">
-                    {modelList.real.map(m => <option key={m} value={m}>{m}</option>)}
-                  </optgroup>
-                )}
-                {modelList.mapped.length > 0 && (
-                  <optgroup label="映射模型">
-                    {modelList.mapped.map(m => <option key={m} value={m}>{m}</option>)}
-                  </optgroup>
-                )}
-              </select>
-              <ChevronDown size={14} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                placeholder="请先配置渠道"
+                options={[
+                  ...(allModels.length === 0 ? [{ value: "", label: "请先配置渠道" }] : []),
+                  ...(modelList.real.length > 0
+                    ? [{ value: "__h_real", label: "实际模型", heading: true }, ...modelList.real.map(m => ({ value: m, label: m }))]
+                    : []),
+                  ...(modelList.mapped.length > 0
+                    ? [{ value: "__h_mapped", label: "映射模型", heading: true }, ...modelList.mapped.map(m => ({ value: m, label: m }))]
+                    : []),
+                ]}
+              />
             </div>
             {allModels.length === 0 && (
               <div className="mt-2 flex items-center gap-1.5 text-xs text-rose-500">

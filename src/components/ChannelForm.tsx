@@ -13,7 +13,7 @@ import {
 } from "../lib/constants";
 import { X, Plus, Check, RefreshCw, KeyRound, Undo, Loader2, Trash2, Power, Copy, Terminal, ChevronDown } from "lucide-react";
 import { parseCurlToChannel } from "../lib/curl";
-import { SELECT_CLS } from "../lib/constants";
+import { Select } from "./Select";
 import { MappingSection } from "./MappingSection";
 import { DraftTestModal } from "./channel-form/DraftTestModal";
 import { ModelSyncModal } from "./channel-form/ModelSyncModal";
@@ -1388,16 +1388,14 @@ export function ChannelForm({ editing, duplicate = false, onClose, onSaved }: {
                 {probeEndpoints.map(ep => (
                   <label key={ep} className="flex flex-wrap items-center gap-3 text-sm">
                     <span className="w-36 shrink-0">{ENDPOINT_LABELS[ep]}</span>
-                    <select
+                    <Select
                       value={form.test_models[ep] ?? ""}
-                      onChange={e => onTestModelChange(ep, e.target.value)}
-                      className={`${SELECT_CLS} min-w-0 flex-1`}
-                      aria-label={`${ENDPOINT_LABELS[ep]} 测试模型`}
-                      required={requiresTestModels}
-                    >
-                      <option value="">{requiresTestModels ? "请选择该端点的测试模型" : `默认：${form.models[0]}`}</option>
-                      {form.models.map(model => <option key={model} value={model}>{model}</option>)}
-                    </select>
+                      onChange={v => onTestModelChange(ep, v)}
+                      className="min-w-0 flex-1"
+                      ariaLabel={`${ENDPOINT_LABELS[ep]} 测试模型`}
+                      placeholder={requiresTestModels ? "请选择该端点的测试模型" : `默认：${form.models[0]}`}
+                      options={form.models.map(model => ({ value: model, label: model }))}
+                    />
                   </label>
                 ))}
               </div>
@@ -1455,15 +1453,15 @@ export function ChannelForm({ editing, duplicate = false, onClose, onSaved }: {
           <div>
             <label className="mb-2 block text-sm font-medium">出站代理</label>
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <select
+              <Select
                 value={form.proxy_mode}
-                onChange={e => setForm(prev => ({ ...prev, proxy_mode: e.target.value as FormState["proxy_mode"] }))}
-                className={SELECT_CLS}
-              >
-                <option value="global">跟随全局设置</option>
-                <option value="direct">强制直连（不走代理）</option>
-                <option value="custom">自定义代理</option>
-              </select>
+                onChange={v => setForm(prev => ({ ...prev, proxy_mode: v as FormState["proxy_mode"] }))}
+                options={[
+                  { value: "global", label: "跟随全局设置" },
+                  { value: "direct", label: "强制直连（不走代理）" },
+                  { value: "custom", label: "自定义代理" },
+                ]}
+              />
               {form.proxy_mode === "custom" && (
                 <input
                   value={form.proxy_url}

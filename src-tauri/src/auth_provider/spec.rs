@@ -101,7 +101,19 @@ const GROK: ProviderSpec = ProviderSpec {
     supports_reset_credit: false,
 };
 
-const REGISTERED: &[&ProviderSpec] = &[&CODEX, &KIMI, &GEMINI, &GROK];
+const WORKBUDDY: ProviderSpec = ProviderSpec {
+    kind: "workbuddy",
+    display_name: "WorkBuddy",
+    icon_key: "workbuddy",
+    login_mode: AuthLoginMode::DeviceCode,
+    login_methods: &[AuthLoginMode::DeviceCode],
+    supports_import: false,
+    supports_export: false,
+    supports_quota: false,
+    supports_reset_credit: false,
+};
+
+const REGISTERED: &[&ProviderSpec] = &[&CODEX, &KIMI, &GEMINI, &GROK, &WORKBUDDY];
 
 /// Spec for an explicit (non-`Other`) provider kind, if it is a known spec.
 pub fn provider_spec(kind: &ProviderKind) -> Option<&'static ProviderSpec> {
@@ -199,7 +211,7 @@ mod tests {
         assert!(names.contains(&"kimi"));
         assert!(names.contains(&"gemini"));
         assert!(names.contains(&"grok"));
-        assert_eq!(registered_provider_specs().len(), 4);
+        assert_eq!(registered_provider_specs().len(), 5);
     }
 
     #[test]

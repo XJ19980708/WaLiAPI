@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { settingsApi, serverApi, securityApi, ocrApi, semanticCacheApi, networkApi, type ProxyCandidate, type OcrCacheInfo } from "../lib/api";
 import { isWebRuntime } from "../lib/web";
-import { SELECT_CLS } from "../lib/constants";
 import { PanelSettingsSection } from "../components/PanelSettingsSection";
+import { Select } from "../components/Select";
 import type { Settings, BuiltinRule, CustomRule } from "../types";
 import { Save, RotateCcw, Check, Server, SlidersHorizontal, Palette, RefreshCw, ShieldAlert, Plus, Trash2, ListChecks, Pencil, X, AlertCircle, HelpCircle, UserRound, ScanText, type LucideIcon } from "lucide-react";
 
@@ -216,8 +216,7 @@ export function SettingsPage() {
     setMessage("服务已触发重启，请稍候查看状态。");
   };
 
-  // 统一 select 样式（共享常量，见 lib/constants.ts）
-  const selectCls = SELECT_CLS;
+  // 统一 select 样式已由 Select 组件接管（见 components/Select.tsx）
   const inputCls = "w-full rounded-2xl border border-border bg-background/70 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary";
   const helpTooltipCls = "pointer-events-none absolute left-1/2 top-full z-50 mt-2 w-64 max-w-[calc(100vw-3rem)] -translate-x-1/2 rounded-xl border border-border bg-background px-3 py-2 text-xs leading-relaxed text-foreground opacity-0 shadow-lg transition-opacity group-hover/help:opacity-100";
 
@@ -300,16 +299,16 @@ export function SettingsPage() {
             </label>
             <div className="col-span-1 lg:col-span-3 xl:col-span-4">
               <label className="mb-2 block text-sm font-medium">安全模式</label>
-              <select
+              <Select
                 value={settings.security_mode}
-                onChange={e => setSettings({ ...settings, security_mode: e.target.value })}
-                className={selectCls}
-              >
-                <option value="audit">只审计 — 记录风险，不影响请求</option>
-                <option value="warn">警告 — 中高风险标记告警</option>
-                <option value="redact">脱敏 — 高风险自动脱敏后转发</option>
-                <option value="block">阻断 — 高风险直接阻断</option>
-              </select>
+                onChange={v => setSettings({ ...settings, security_mode: v })}
+                options={[
+                  { value: "audit", label: "只审计 — 记录风险，不影响请求" },
+                  { value: "warn", label: "警告 — 中高风险标记告警" },
+                  { value: "redact", label: "脱敏 — 高风险自动脱敏后转发" },
+                  { value: "block", label: "阻断 — 高风险直接阻断" },
+                ]}
+              />
             </div>
           </div>
 
@@ -359,17 +358,18 @@ export function SettingsPage() {
                     /* 编辑模式 */
                     <div className="space-y-2">
                       <div className="flex items-center gap-2">
-                        <select
+                        <Select
+                          size="sm"
                           value={editBuiltinData.severity}
-                          onChange={e => setEditBuiltinData({ ...editBuiltinData, severity: e.target.value })}
-                          className="rounded-lg border border-border bg-background/70 px-2 py-1 text-xs"
-                        >
-                          <option value="info">提示</option>
-                          <option value="low">低</option>
-                          <option value="medium">中</option>
-                          <option value="high">高</option>
-                          <option value="critical">严重</option>
-                        </select>
+                          onChange={v => setEditBuiltinData({ ...editBuiltinData, severity: v })}
+                          options={[
+                            { value: "info", label: "提示" },
+                            { value: "low", label: "低" },
+                            { value: "medium", label: "中" },
+                            { value: "high", label: "高" },
+                            { value: "critical", label: "严重" },
+                          ]}
+                        />
                         <input
                           value={editBuiltinData.title}
                           onChange={e => setEditBuiltinData({ ...editBuiltinData, title: e.target.value })}
@@ -439,29 +439,26 @@ export function SettingsPage() {
                 <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
                   <div>
                     <label className="mb-1 block text-[11px] text-muted-foreground">类型</label>
-                    <select value={newRule.rule_type} onChange={e => setNewRule({ ...newRule, rule_type: e.target.value })} className={selectCls} style={{ padding: "8px 12px", fontSize: "12px" }}>
-                      <option value="blacklist">黑名单</option>
-                      <option value="whitelist">白名单</option>
-                    </select>
+                    <Select size="sm" value={newRule.rule_type} onChange={v => setNewRule({ ...newRule, rule_type: v })} options={[{ value: "blacklist", label: "黑名单" }, { value: "whitelist", label: "白名单" }]} />
                   </div>
                   <div>
                     <label className="mb-1 block text-[11px] text-muted-foreground">分类</label>
-                    <select value={newRule.category} onChange={e => setNewRule({ ...newRule, category: e.target.value })} className={selectCls} style={{ padding: "8px 12px", fontSize: "12px" }}>
-                      <option value="domain">域名</option>
-                      <option value="tool">工具名</option>
-                      <option value="path">文件路径</option>
-                      <option value="keyword">关键词</option>
-                    </select>
+                    <Select size="sm" value={newRule.category} onChange={v => setNewRule({ ...newRule, category: v })} options={[
+                      { value: "domain", label: "域名" },
+                      { value: "tool", label: "工具名" },
+                      { value: "path", label: "文件路径" },
+                      { value: "keyword", label: "关键词" },
+                    ]} />
                   </div>
                   <div>
                     <label className="mb-1 block text-[11px] text-muted-foreground">严重程度</label>
-                    <select value={newRule.severity} onChange={e => setNewRule({ ...newRule, severity: e.target.value })} className={selectCls} style={{ padding: "8px 12px", fontSize: "12px" }}>
-                      <option value="info">提示</option>
-                      <option value="low">低</option>
-                      <option value="medium">中</option>
-                      <option value="high">高</option>
-                      <option value="critical">严重</option>
-                    </select>
+                    <Select size="sm" value={newRule.severity} onChange={v => setNewRule({ ...newRule, severity: v })} options={[
+                      { value: "info", label: "提示" },
+                      { value: "low", label: "低" },
+                      { value: "medium", label: "中" },
+                      { value: "high", label: "高" },
+                      { value: "critical", label: "严重" },
+                    ]} />
                   </div>
                 </div>
                 <div>
@@ -664,30 +661,30 @@ export function SettingsPage() {
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div>
                 <label className="mb-2 block text-sm font-medium">日志级别</label>
-                <select
+                <Select
                   value={settings.log_detail_level}
-                  onChange={e => setSettings({ ...settings, log_detail_level: e.target.value })}
-                  className={selectCls}
-                >
-                  <option value="basic">基本</option>
-                  <option value="brief">简要</option>
-                  <option value="detailed">详情</option>
-                </select>
+                  onChange={v => setSettings({ ...settings, log_detail_level: v })}
+                  options={[
+                    { value: "basic", label: "基本" },
+                    { value: "brief", label: "简要" },
+                    { value: "detailed", label: "详情" },
+                  ]}
+                />
                 <p className="mt-1 text-xs text-muted-foreground">基本模式只保存请求状态与用量摘要；简要模式保存完整响应正文，但请求的消息列表只保留最新 3 条（Agent 长对话下可省下绝大部分空间）；详情模式保存完整请求与响应正文，可能显著增加数据库大小。三种模式的调用次数、成功率与 Token 用量统计完全一致。</p>
               </div>
               <div>
                 <label className="mb-2 block text-sm font-medium">日志保留期</label>
-                <select
-                  value={settings.log_retention_days}
-                  onChange={e => setSettings({ ...settings, log_retention_days: Number(e.target.value) })}
-                  className={selectCls}
-                >
-                  <option value={1}>1 天</option>
-                  <option value={7}>7 天</option>
-                  <option value={30}>30 天</option>
-                  <option value={90}>90 天</option>
-                  <option value={0}>永久保留</option>
-                </select>
+                <Select
+                  value={String(settings.log_retention_days)}
+                  onChange={v => setSettings({ ...settings, log_retention_days: Number(v) })}
+                  options={[
+                    { value: "1", label: "1 天" },
+                    { value: "7", label: "7 天" },
+                    { value: "30", label: "30 天" },
+                    { value: "90", label: "90 天" },
+                    { value: "0", label: "永久保留" },
+                  ]}
+                />
                 <p className="mt-1 text-xs text-muted-foreground">过期审计日志会由服务自动清理；清理日志不影响已统计的调用量与 Token 用量（统计数据独立持久化）。如需重置统计数据，请在日志页清理时勾选「同时清除统计数据」（会二次确认并要求先备份）。删除后数据库文件需单独压缩才会缩小。</p>
               </div>
             </div>
@@ -890,26 +887,26 @@ export function SettingsPage() {
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div>
               <label className="mb-2 block text-sm font-medium">主题</label>
-              <select
+              <Select
                 value={settings.ui_theme}
-                onChange={e => setSettings({ ...settings, ui_theme: e.target.value })}
-                className={selectCls}
-              >
-                <option value="dark">深色</option>
-                <option value="light">浅色</option>
-                <option value="system">跟随系统</option>
-              </select>
+                onChange={v => setSettings({ ...settings, ui_theme: v })}
+                options={[
+                  { value: "dark", label: "深色" },
+                  { value: "light", label: "浅色" },
+                  { value: "system", label: "跟随系统" },
+                ]}
+              />
             </div>
             <div>
               <label className="mb-2 block text-sm font-medium">语言</label>
-              <select
+              <Select
                 value={settings.ui_language}
-                onChange={e => setSettings({ ...settings, ui_language: e.target.value })}
-                className={selectCls}
-              >
-                <option value="zh-CN">简体中文</option>
-                <option value="en">English</option>
-              </select>
+                onChange={v => setSettings({ ...settings, ui_language: v })}
+                options={[
+                  { value: "zh-CN", label: "简体中文" },
+                  { value: "en", label: "English" },
+                ]}
+              />
             </div>
           </div>
         </div>
