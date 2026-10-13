@@ -40,6 +40,7 @@ export function Select({
 }: SelectProps) {
   const [open, setOpen] = useState(false);
   const [focusIdx, setFocusIdx] = useState(-1);
+  const [dropUp, setDropUp] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const listboxId = useId();
@@ -73,6 +74,14 @@ export function Select({
     setFocusIdx(idx >= 0 ? idx : enabledIndexes[0] ?? -1);
     // 仅在打开瞬间执行一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // 打开时测量视口剩余空间：下方放不下弹层（约 288px 上限）则向上翻转展开
+  useEffect(() => {
+    if (!open || !rootRef.current) return;
+    const rect = rootRef.current.getBoundingClientRect();
+    const listHeight = Math.min(listRef.current?.scrollHeight ?? 0, 288);
+    setDropUp(rect.bottom + listHeight + 12 > window.innerHeight && rect.top > listHeight + 12);
   }, [open]);
 
   // 聚焦项滚动到可视区域
@@ -155,9 +164,9 @@ export function Select({
           ref={listRef}
           id={listboxId}
           role="listbox"
-          className={`absolute top-[calc(100%+6px)] z-50 max-h-72 overflow-y-auto rounded-xl border border-border bg-white p-1 shadow-[0_16px_40px_rgba(15,23,42,0.16)] ${
-            fullWidthList ? "left-0 right-0" : "left-0 min-w-full"
-          }`}
+          className={`absolute z-50 max-h-72 overflow-y-auto rounded-xl border border-border bg-white p-1 shadow-[0_16px_40px_rgba(15,23,42,0.16)] ${
+            dropUp ? "bottom-[calc(100%+6px)]" : "top-[calc(100%+6px)]"
+          } ${fullWidthList ? "left-0 right-0" : "left-0 min-w-full"}`}
         >
           {options.length === 0 && (
             <div className="px-3 py-2 text-sm text-muted-foreground">{placeholder}</div>
