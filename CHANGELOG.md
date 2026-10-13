@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.4.1 (2026-10-13)
+
+### WorkBuddy 对接（@fuzhengwei）
+
+- ✨ **新增 WorkBuddy Auth Provider**：新增 `auth_provider/workbuddy_backend.rs` 与 `workbuddy_login.rs`，Auth 账号体系接入 WorkBuddy 登录与凭证管理，路由规划器（`route_plan.rs`）识别 WorkBuddy 渠道身份
+- 🎨 **前端配套改造**：渠道表单（ChannelForm）与 Auth 渠道页接入 WorkBuddy 登录入口与 Provider 选项；新增通用 `Select` 组件；知识库连接面板、设置、日志、用量、应用配置等页面交互统一优化
+
+### 知识库与 RAG（PR #158，@Zhengmingming1）
+
+- 🐛 **知识库 Embedding 批次索引重复恢复**：重构 embedder 批次写入逻辑，重复批次索引场景下可自动恢复，不再导致向量写入失败或索引错乱；新增专项回归测试 `rag_embedding_batch_recovery.rs`（+484 / -37）
+
+### Windows 升级兼容（PR #157，@huangkemingyyds）
+
+- 🐛 **兼容 Windows 旧版迁移的 CRLF 校验值**：数据库迁移校验兼容旧版安装包中 CRLF 行尾导致的 checksum 漂移，修复 Windows 从旧版升级后无法启动；`.gitattributes` 锁定迁移文件行尾，新增 `scripts/diagnose-upgrade-checksums.py` 诊断脚本与升级诊断文档
+- 🐛 **WAL 启用改为启动期 best-effort**：journal 模式移出建连选项，启动期一次性尽力启用 WAL（SQLite < 3.51.3 跳过、文件占用时重试后降级沿用原模式），彻底修复 Windows 升级场景启动白屏崩溃
+
+### 其他
+
+- 📝 **README 贡献者数据同步**：更新小傅哥（322 commits）、Nelson（30 commits，PR #158）、黄科铭（6 commits，PR #157）提交数与代码变更统计
+- 🔧 **版本号统一升级至 0.4.1**（package.json / Cargo.toml / tauri.conf.json / Cargo.lock）
+
 ## v0.4.0 (2026-10-09)
 
 ### 用量统计与日志（PR #154，@freakojc）
