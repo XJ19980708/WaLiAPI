@@ -629,6 +629,7 @@ async fn ask_internal(shared: &SharedState, input: AskInput) -> Response {
             input.strict_retrieval,
             input.candidate_k,
             input.reasoning_effort.as_deref(),
+            input.temperature,
         )
         .await
         {

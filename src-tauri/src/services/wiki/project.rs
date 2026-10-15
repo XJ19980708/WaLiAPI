@@ -33,7 +33,7 @@ fn project_component(project_id: &str) -> String {
     format!("invalid-{encoded}")
 }
 
-fn safe_relative_path(path: &str) -> Result<PathBuf, String> {
+pub(crate) fn safe_relative_path(path: &str) -> Result<PathBuf, String> {
     if path.is_empty() || path.contains('\\') {
         return Err("Invalid relative path".to_owned());
     }
@@ -264,6 +264,23 @@ pub async fn write_source_file(
     Ok(file_path)
 }
 
+/// Resolve source content bytes from an uploaded `content` string.
+/// PDF 源资料走后端 base64 传输（前端 `fileToBase64`），此处解码回原始字节；
+/// 非 PDF（或解码失败的历史数据）按 UTF-8 文本字节处理。
+pub fn resolve_source_content(filename: &str, content: &str) -> Vec<u8> {
+    let is_pdf = filename
+        .rsplit('.')
+        .next()
+        .map(|ext| ext.eq_ignore_ascii_case("pdf"))
+        .unwrap_or(false);
+    if is_pdf {
+        if let Ok(bytes) = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, content) {
+            return bytes;
+        }
+    }
+    content.as_bytes().to_vec()
+}
+
 /// Read a source file from raw/sources/ or raw/.
 pub async fn read_source_file(project_id: &str, path: &str) -> Result<Vec<u8>, String> {
     let dir = project_wiki_dir(project_id);
@@ -324,6 +341,25 @@ mod tests {
         assert_eq!(project_component("project-123"), "project-123");
         assert!(project_component("../../outside").starts_with("invalid-"));
         assert!(!project_component("../../outside").contains('/'));
+    }
+
+    #[test]
+    fn resolve_source_content_decodes_pdf_base64_and_keeps_text_bytes() {
+        // PDF：base64 按字节还原（含二进制内容）
+        let raw = vec![0x25u8, 0x50, 0x44, 0x46, 0x00, 0xff, 0x80]; // "%PDF\x00\xff\x80"
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &raw);
+        assert_eq!(resolve_source_content("手册.pdf", &b64), raw);
+        assert_eq!(resolve_source_content("guide.PDF", &b64), raw);
+        // 非 PDF：按 UTF-8 文本字节处理
+        assert_eq!(
+            resolve_source_content("notes.md", "hello 中文"),
+            "hello 中文".as_bytes()
+        );
+        // PDF 但内容不是合法 base64（历史数据）→ 回退文本字节
+        assert_eq!(
+            resolve_source_content("broken.pdf", "not-base64!!!"),
+            "not-base64!!!".as_bytes()
+        );
     }
 
     #[cfg(unix)]

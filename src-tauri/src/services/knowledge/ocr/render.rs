@@ -127,6 +127,106 @@ impl PdfRenderer {
         .map_err(|e| OcrError::RenderFailed(format!("JPEG 编码失败: {}", e)))?;
         Ok(buf)
     }
+
+    /// 渲染第 page_no 页上**所有图像对象**（嵌入的截图/图片），各自独立编码为 JPEG。
+    /// 只取图像对象本身（不包含该页文字层文字）——即「去除文字后的图像」。
+    /// 纯文字 PDF 或页面无图像对象时返回空 Vec。
+    pub fn page_images_jpegs(
+        &self,
+        pdf: &[u8],
+        page_no: usize,
+        dpi: u32,
+    ) -> Result<Vec<Vec<u8>>, OcrError> {
+        let document = self
+            .pdfium
+            .load_pdf_from_byte_slice(pdf, None)
+            .map_err(|e| {
+                OcrError::RenderFailed(format!("PDF 渲染失败：文件可能加密或损坏（{}）", e))
+            })?;
+        let page = document
+            .pages()
+            .get((page_no.saturating_sub(1)) as u16)
+            .map_err(|e| OcrError::RenderFailed(format!("读取第 {} 页失败: {}", page_no, e)))?;
+
+        // dpi 仅用于整页渲染；图像对象按原始分辨率输出，无需缩放
+        let _ = dpi;
+        let mut out: Vec<Vec<u8>> = Vec::new();
+        for obj in page.objects().iter() {
+            if let PdfPageObject::Image(image) = &obj {
+                // 原始图像（只含图片本身，不含页面文字层）
+                if let Ok(dynamic) = image.get_raw_image() {
+                    let rgb = dynamic.into_rgb8();
+                    let mut buf: Vec<u8> = Vec::new();
+                    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 85);
+                    if image::ImageEncoder::write_image(
+                        encoder,
+                        rgb.as_raw(),
+                        rgb.width(),
+                        rgb.height(),
+                        image::ExtendedColorType::Rgb8,
+                    )
+                    .is_ok()
+                    {
+                        out.push(buf);
+                    }
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// 一次性加载 PDF，逐页提取全部图像对象（嵌入截图/图片）为 JPEG。
+    /// 返回 `[page0 图片数组, page1 图片数组, ...]`（每张 = JPEG 字节流）。
+    ///
+    /// 性能说明：逐页调用 `page_images_jpegs` 时每页都会 `load_pdf_from_byte_slice`
+    /// 重新解析整个 PDF（大文件/多图文档开销明显，实测为摄入变慢的根因之一）。
+    /// 本方法只解析一次，随后按页索引取图。
+    pub fn all_pages_images_jpegs(
+        &self,
+        pdf: &[u8],
+        dpi: u32,
+    ) -> Result<Vec<Vec<Vec<u8>>>, OcrError> {
+        let document = self
+            .pdfium
+            .load_pdf_from_byte_slice(pdf, None)
+            .map_err(|e| {
+                OcrError::RenderFailed(format!("PDF 渲染失败：文件可能加密或损坏（{}）", e))
+            })?;
+        // 图像对象按原始分辨率输出，无需缩放
+        let _ = dpi;
+        let pages = document.pages();
+        let count = pages.len();
+        let mut all: Vec<Vec<Vec<u8>>> = Vec::with_capacity(count as usize);
+        for idx in 0..count {
+            let page = pages.get(idx).map_err(|e| {
+                OcrError::RenderFailed(format!("读取第 {} 页失败: {}", idx + 1, e))
+            })?;
+            let mut imgs: Vec<Vec<u8>> = Vec::new();
+            for obj in page.objects().iter() {
+                if let PdfPageObject::Image(image) = &obj {
+                    if let Ok(dynamic) = image.get_raw_image() {
+                        let rgb = dynamic.into_rgb8();
+                        let mut buf: Vec<u8> = Vec::new();
+                        let encoder =
+                            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 85);
+                        if image::ImageEncoder::write_image(
+                            encoder,
+                            rgb.as_raw(),
+                            rgb.width(),
+                            rgb.height(),
+                            image::ExtendedColorType::Rgb8,
+                        )
+                        .is_ok()
+                        {
+                            imgs.push(buf);
+                        }
+                    }
+                }
+            }
+            all.push(imgs);
+        }
+        Ok(all)
+    }
 }
 
 /// 当前平台的 pdfium 动态库文件名。

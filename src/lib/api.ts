@@ -91,6 +91,8 @@ export const apiKeyApi = {
   getAnswerModels: (id: string) => invoke<string[]>("get_api_key_answer_models", { id }),
   getKnowledgeAccess: (id: string) => invoke<string[]>("get_api_key_knowledge_access", { id }),
   setKnowledgeAccess: (id: string, kbIds: string[]) => invoke<void>("set_api_key_knowledge_access", { id, kbIds }),
+  getWikiAccess: (id: string) => invoke<string[]>("get_api_key_wiki_access", { id }),
+  setWikiAccess: (id: string, projectIds: string[]) => invoke<void>("set_api_key_wiki_access", { id, projectIds }),
   testKnowledgeAccess: (id: string, kbId: string) => invoke<{ rest_status: number; rest_ok: boolean; mcp_status: number; mcp_ok: boolean }>("test_api_key_knowledge_access", { id, kbId }),
   testKnowledgeHealth: (id: string, kbId: string, model: string, question: string, searchMode: string) =>
     invoke<KnowledgeHealthTest>("test_api_key_knowledge_health", { id, kbId, model, question, searchMode }),
@@ -338,6 +340,8 @@ export interface KnowledgeBase {
     embedding_model: string | null;
     embedding_channel_id: string | null;
     ocr_model: string | null;
+    reasoning_effort: string | null;
+    temperature: number | null;
     mcp_enabled: number;
     chunk_size: number;
     chunk_overlap: number;
@@ -470,14 +474,16 @@ export interface KbTag {
 export const kbApi = {
   getEmbeddingCapability: (model: string) => invoke<{ available: boolean; message: string }>("get_knowledge_embedding_capability", { model }),
   getAll: () => invoke<KnowledgeBase[]>("get_knowledge_bases"),
-  create: (input: { name: string; description?: string; embedding_model?: string; ocr_model?: string | null }) =>
+  create: (input: { name: string; description?: string; embedding_model?: string; embedding_channel_id?: string; ocr_model?: string | null; reasoning_effort?: string | null; temperature?: number | null }) =>
     invoke<KnowledgeBase>("create_knowledge_base", { input }),
-  update: (id: string, input: Partial<{ name: string; description: string; embedding_model: string; embedding_channel_id: string; ocr_model: string | null; status: number; mcp_enabled: number; chunk_size: number; chunk_overlap: number; excluded_dirs: string; excluded_files: string; included_files: string; embedding_batch_size: number }>) =>
+  update: (id: string, input: Partial<{ name: string; description: string; embedding_model: string; embedding_channel_id: string; ocr_model: string | null; reasoning_effort: string | null; temperature: number | null; status: number; mcp_enabled: number; chunk_size: number; chunk_overlap: number; excluded_dirs: string; excluded_files: string; included_files: string; embedding_batch_size: number }>) =>
         invoke<KnowledgeBase>("update_knowledge_base", { id, input }),
   delete: (id: string) => invoke<void>("delete_knowledge_base", { id }),
   getDocuments: (kbId: string) => invoke<KbDocument[]>("get_kb_documents", { kbId }),
   uploadDocument: (input: { kb_id: string; filename: string; content: string }) =>
     invoke<KbDocument>("upload_kb_document", { input }),
+  uploadDocumentFromPath: (kbId: string, path: string) =>
+    invoke<KbDocument>("upload_kb_document_from_path", { kbId, path }),
   deleteDocument: (docId: string, kbId: string) =>
     invoke<void>("delete_kb_document", { docId, kbId }),
   reindexDocument: (docId: string) =>
@@ -514,6 +520,10 @@ export interface WikiProject {
     chat_model: string | null;
     ingest_channel_id: string | null;
     chat_channel_id: string | null;
+    pdf_ocr_channel_id: string | null;
+    pdf_ocr_model: string | null;
+    reasoning_effort: string | null;
+    temperature: number | null;
     mcp_enabled: number;
     source_count: number;
     page_count: number;
@@ -530,6 +540,10 @@ export interface CreateWikiProjectInput {
     chat_model?: string;
     ingest_channel_id?: string;
     chat_channel_id?: string;
+    pdf_ocr_channel_id?: string;
+    pdf_ocr_model?: string;
+    reasoning_effort?: string;
+    temperature?: number;
     schema_text?: string;
 }
 
@@ -542,6 +556,10 @@ export interface UpdateWikiProjectInput {
     chat_model?: string;
     ingest_channel_id?: string;
     chat_channel_id?: string;
+    pdf_ocr_channel_id?: string;
+    pdf_ocr_model?: string;
+    reasoning_effort?: string;
+    temperature?: number;
     mcp_enabled?: number;
 }
 
@@ -626,13 +644,16 @@ export const wikiApi = {
     getPages: (projectId: string) => invoke<WikiPage[]>("get_wiki_pages", { projectId }),
     getPage: (projectId: string, path: string) => invoke<WikiPage & { content: string }>("get_wiki_page", { projectId, path }),
     savePage: (projectId: string, path: string, content: string) => invoke<void>("save_wiki_page", { projectId, path, content }),
+    deletePage: (projectId: string, path: string) => invoke<void>("delete_wiki_page", { projectId, path }),
     getSources: (projectId: string) => invoke<WikiSource[]>("get_wiki_sources", { projectId }),
     addSource: (projectId: string, input: AddWikiSourceInput) => invoke<WikiSource>("add_wiki_source", { projectId, input }),
+    addSourceFromPath: (projectId: string, path: string) => invoke<WikiSource>("add_wiki_source_from_path", { projectId, path }),
     deleteSource: (sourceId: string) => invoke<void>("delete_wiki_source", { sourceId }),
     search: (projectId: string, query: string, topK?: number) => invoke<WikiSearchResult[]>("search_wiki", { projectId, query, topK }),
     getGraph: (projectId: string) => invoke<WikiGraphData>("get_wiki_graph", { projectId }),
     getStats: (projectId: string) => invoke<Record<string, unknown>>("get_wiki_stats", { projectId }),
     ingestSource: (projectId: string, sourceId: string) => invoke<{ status: string; pages_created: number; page_paths: string[] }>("ingest_wiki_source", { projectId, sourceId }),
+    cancelIngest: (projectId: string, sourceId: string) => invoke<{ status: string }>("cancel_wiki_ingest", { projectId, sourceId }),
     rescanSources: (projectId: string) => invoke<{ status: string; processed: number; results: unknown[] }>("rescan_wiki_sources", { projectId }),
     getTags: (projectId: string, limit?: number) => invoke<WikiTag[]>("get_wiki_tags", { projectId, limit }),
 };

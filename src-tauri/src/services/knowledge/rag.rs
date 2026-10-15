@@ -83,6 +83,7 @@ pub async fn ask_with_config(
         false,
         None,
         None,
+        None,
     )
     .await
     .map_err(|e| e.to_string())
@@ -110,8 +111,14 @@ pub(crate) async fn ask_with_client(
     strict_retrieval: bool,
     candidate_k: Option<usize>,
     reasoning_effort: Option<&str>,
+    temperature: Option<f64>,
 ) -> Result<RagAnswer, QueryError> {
-    let reasoning_effort = validate_reasoning_request(reasoning_effort, false)?;
+    let kb_repo = KbRepository::new(pool.clone());
+    // KB 级配置兜底：调用方未显式传档位/温度时，使用知识库设置的默认值
+    let kb = kb_repo.get_kb(kb_id).await.ok();
+    let effective_reasoning = reasoning_effort.or(kb.as_ref().and_then(|k| k.reasoning_effort.as_deref()));
+    let reasoning_effort = validate_reasoning_request(effective_reasoning, false)?;
+    let effective_temperature = temperature.or(kb.as_ref().and_then(|k| k.temperature));
     let mut stages = Vec::new();
     let strict = diagnostics_enabled
         || allow_keyword_fallback
@@ -123,8 +130,7 @@ pub(crate) async fn ask_with_client(
         .or_else(|| budget::current().map(|budget| budget.request_id().to_string()))
         .unwrap_or_default();
 
-    let kb_repo = KbRepository::new(pool.clone());
-    validate_candidate_k(top_k, candidate_k)?;
+validate_candidate_k(top_k, candidate_k)?;
     let ordered_context = candidate_k.is_some();
     let retrieval_k = candidate_k.unwrap_or(top_k);
     let anchors = if ordered_context {
@@ -302,6 +308,10 @@ pub(crate) async fn ask_with_client(
         "stream": false
     });
     let reasoning = apply_reasoning_effort(&mut chat_request, reasoning_effort)?;
+    // KB 级温度（显式传入 > 知识库设置 > 不设置,跟随模型默认）
+    if let Some(temp) = effective_temperature {
+        chat_request["temperature"] = serde_json::json!(temp.clamp(0.0, 2.0));
+    }
     let answer_started = Instant::now();
     client
         .ensure_knowledge_access(kb_id, mcp_only)
@@ -1141,6 +1151,17 @@ fn apply_reasoning_effort(
     let effort = validate_reasoning_request(effort, false)?;
     if let Some(effort) = effort {
         request["reasoning_effort"] = serde_json::json!(effort);
+        // 同步显式 thinking（Anthropic/Kimi 语义）：启用类→enabled，none/off→disabled；
+        // default 不写（跟随模型默认）。网关 Chat→Messages 已优先透传显式 thinking。
+        match effort {
+            "none" | "off" => {
+                request["thinking"] = serde_json::json!({"type": "disabled"});
+            }
+            e if e != "default" => {
+                request["thinking"] = serde_json::json!({"type": "enabled"});
+            }
+            _ => {}
+        }
     }
     Ok(reasoning_info(effort, ReasoningStatus::Requested))
 }
@@ -1166,7 +1187,12 @@ mod reasoning_tests {
             if let Some(effort @ ("none" | "low" | "medium" | "high")) = effort {
                 assert_eq!(request["reasoning_effort"], effort);
                 assert_eq!(request["max_tokens"], 123);
-                assert_eq!(request.as_object().unwrap().len(), 4);
+                // 档位与 thinking 联动：启用类→enabled，none→disabled
+                assert_eq!(
+                    request["thinking"]["type"],
+                    if effort == "none" { "disabled" } else { "enabled" }
+                );
+                assert_eq!(request.as_object().unwrap().len(), 5);
                 let info = info.unwrap();
                 assert_eq!(info.requested, effort);
                 assert_eq!(info.status, ReasoningStatus::Requested);

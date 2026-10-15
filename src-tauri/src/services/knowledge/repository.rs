@@ -34,8 +34,8 @@ impl KbRepository {
         // 新知识库默认授权全部已有密钥；事务保证授权失败时创建也回滚。
         let mut tx = self.pool.begin().await?;
         sqlx::query(
-            "INSERT INTO kb_knowledge_bases (id, name, description, status, doc_count, chunk_count, total_tokens, embedding_model, embedding_channel_id, mcp_enabled, chunk_size, chunk_overlap, excluded_dirs, excluded_files, included_files, embedding_dim, index_status, embedding_batch_size, ocr_model, created_at, updated_at)
-             VALUES (?, ?, ?, 1, 0, 0, 0, ?, ?, 1, 512, 64, '', '', '', 0, 'none', 32, ?, ?, ?)"
+            "INSERT INTO kb_knowledge_bases (id, name, description, status, doc_count, chunk_count, total_tokens, embedding_model, embedding_channel_id, mcp_enabled, chunk_size, chunk_overlap, excluded_dirs, excluded_files, included_files, embedding_dim, index_status, embedding_batch_size, ocr_model, reasoning_effort, temperature, created_at, updated_at)
+             VALUES (?, ?, ?, 1, 0, 0, 0, ?, ?, 1, 512, 64, '', '', '', 0, 'none', 32, ?, ?, ?, ?, ?)"
         )
         .bind(&id)
         .bind(&input.name)
@@ -43,6 +43,8 @@ impl KbRepository {
         .bind(&input.embedding_model)
         .bind(&input.embedding_channel_id)
         .bind(&input.ocr_model)
+        .bind(&input.reasoning_effort)
+        .bind(&input.temperature)
         .bind(&now)
         .bind(&now)
         .execute(&mut *tx)
@@ -123,6 +125,12 @@ impl KbRepository {
         }
         if let Some(ocr_model) = &input.ocr_model {
             q.push(", ocr_model = ").push_bind(ocr_model);
+        }
+        if let Some(reasoning_effort) = &input.reasoning_effort {
+            q.push(", reasoning_effort = ").push_bind(reasoning_effort);
+        }
+        if let Some(temperature) = input.temperature {
+            q.push(", temperature = ").push_bind(temperature);
         }
 
         q.push(" WHERE id = ").push_bind(id);

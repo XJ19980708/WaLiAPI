@@ -4,11 +4,12 @@ use super::{
 };
 use crate::{
     db::{models::ApiKey, repository::Repository},
-    server::knowledge_access::{get_grants, set_grants},
+    server::knowledge_access::{get_grants, get_wiki_grants, set_grants, set_wiki_grants},
     services::knowledge::{
         models::KbKnowledgeBase,
         repository::{ChunkInsert, KbRepository},
     },
+    services::wiki::{models::CreateProjectInput, repository::WikiRepository},
     AppState,
 };
 use axum::{body::to_bytes, http::StatusCode, response::Response, routing::post, Json, Router};
@@ -18,6 +19,207 @@ use std::sync::{
     Arc,
 };
 use tower::ServiceExt;
+
+// ── Wiki 查询授权（与 RAG 平行的独立维度）─────────────────────────
+
+fn rpc_list(key: &str) -> axum::http::Request<axum::body::Body> {
+    json_request(
+        "POST",
+        "/mcp",
+        Some(key),
+        &json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}).to_string(),
+    )
+}
+
+async fn create_wiki_project(state: &AppState, name: &str) -> String {
+    let repo = WikiRepository::new(state.db.pool.clone());
+    let id = uuid::Uuid::new_v4().to_string();
+    let input: CreateProjectInput = serde_json::from_value(json!({ "name": name })).unwrap();
+    repo.create_project_with_id(&id, &input, "/tmp/waliapi-test-wiki")
+        .await
+        .unwrap();
+    id
+}
+
+fn tool_names(listed: &Value) -> Vec<String> {
+    listed["result"]["tools"]
+        .as_array()
+        .expect("tools/list 应返回工具数组")
+        .iter()
+        .map(|t| t["name"].as_str().unwrap_or("").to_string())
+        .collect()
+}
+
+/// 只有 Wiki 授权（无任何 RAG 授权）的 Key 也能连 MCP 并查询 Wiki 只读工具。
+#[tokio::test]
+async fn wiki_only_key_can_connect_mcp_and_query_wiki() {
+    let state = test_state().await;
+    let repo = Repository::new(state.db.pool.clone());
+    let project = create_wiki_project(&state, "handbook").await;
+    let key = repo
+        .create_api_key(&serde_json::from_value(json!({"name":"wiki-only"})).unwrap())
+        .await
+        .unwrap();
+    // 撤销全部 RAG 授权，只保留默认获得的 Wiki 授权。
+    set_grants(&state.db.pool, &key.id, &[]).await.unwrap();
+    assert!(get_grants(&state.db.pool, &key.id).await.unwrap().is_empty());
+    assert_eq!(
+        get_wiki_grants(&state.db.pool, &key.id).await.unwrap(),
+        vec![project.clone()]
+    );
+
+    let app = build_router(state.clone(), test_shared(&state, None, None));
+    // 入口不再因「无 RAG 授权」拒绝；tools/list 暴露 Wiki 只读工具。
+    let names = tool_names(
+        &body(app.clone().oneshot(rpc_list(&key.key)).await.unwrap()).await,
+    );
+    for expected in ["list_wiki_projects", "get_wiki_project", "search_wiki", "ask_wiki"] {
+        assert!(
+            names.iter().any(|n| n == expected),
+            "缺少 Wiki 工具 {expected}: {names:?}"
+        );
+    }
+    // 写入/删除/摄入类工具不开放给 API Key。
+    for forbidden in [
+        "create_wiki_project",
+        "save_wiki_page",
+        "delete_wiki_project",
+        "ingest_wiki_source",
+    ] {
+        assert!(
+            !names.iter().any(|n| n == forbidden),
+            "不应暴露写入工具 {forbidden}"
+        );
+    }
+    // 纯 Wiki 授权：RAG 相关工具不出现，列表保持干净。
+    assert!(
+        !names.iter().any(|n| n == "list_knowledge_bases"),
+        "纯 Wiki 授权的 Key 不应暴露 RAG 工具: {names:?}"
+    );
+
+    // list_wiki_projects 只返回已授权且开启 MCP 的项目。
+    let listed = body(
+        app.oneshot(rpc(&key.key, "list_wiki_projects", json!({})))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(listed["result"]["isError"], false);
+    assert!(listed.to_string().contains(&project));
+}
+
+/// 新建 Key 默认授权全部 Wiki 项目；新建 Wiki 项目默认授权全部已有 Key。
+#[tokio::test]
+async fn new_key_and_wiki_project_grant_each_other_by_default() {
+    let state = test_state().await;
+    let repo = Repository::new(state.db.pool.clone());
+    let existing = create_wiki_project(&state, "existing").await;
+    let key = repo
+        .create_api_key(&serde_json::from_value(json!({"name":"fresh-key"})).unwrap())
+        .await
+        .unwrap();
+    assert!(
+        get_wiki_grants(&state.db.pool, &key.id)
+            .await
+            .unwrap()
+            .contains(&existing),
+        "新建 Key 应默认授权全部 Wiki 项目"
+    );
+    let later = create_wiki_project(&state, "later").await;
+    assert!(
+        get_wiki_grants(&state.db.pool, &key.id)
+            .await
+            .unwrap()
+            .contains(&later),
+        "新建 Wiki 项目应默认授权全部已有 Key"
+    );
+}
+
+/// scoped API Key：未授权项目 / 关闭 MCP 暴露 / 写入工具均被拒。
+#[tokio::test]
+async fn scoped_wiki_tools_respect_grants_and_mcp_flag() {
+    let state = test_state().await;
+    let repo = Repository::new(state.db.pool.clone());
+    let granted = create_wiki_project(&state, "granted-wiki").await;
+    let other = create_wiki_project(&state, "other-wiki").await;
+    let key = repo
+        .create_api_key(&serde_json::from_value(json!({"name":"scoped-wiki"})).unwrap())
+        .await
+        .unwrap();
+    set_wiki_grants(&state.db.pool, &key.id, std::slice::from_ref(&granted))
+        .await
+        .unwrap();
+    let app = build_router(state.clone(), test_shared(&state, None, None));
+
+    // 未授权项目：拒绝。
+    let denied = body(
+        app.clone()
+            .oneshot(rpc(&key.key, "get_wiki_project", json!({"project_id": other})))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(denied["result"]["isError"], true);
+    assert!(
+        denied.to_string().contains("Wiki project access denied"),
+        "{denied}"
+    );
+
+    // 关闭 MCP 暴露后，已授权项目也被拒。
+    sqlx::query("UPDATE wiki_projects SET mcp_enabled = 0 WHERE id = ?")
+        .bind(&granted)
+        .execute(&state.db.pool)
+        .await
+        .unwrap();
+    let hidden = body(
+        app.clone()
+            .oneshot(rpc(&key.key, "get_wiki_project", json!({"project_id": granted})))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(hidden["result"]["isError"], true);
+    assert!(hidden.to_string().contains("not enabled"), "{hidden}");
+
+    // 写入工具不在白名单：JSON-RPC 直接拒绝。
+    let write = body(
+        app.oneshot(rpc(
+            &key.key,
+            "save_wiki_page",
+            json!({"project_id": granted, "path":"a.md","content":"x"}),
+        ))
+        .await
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(write["error"]["code"], -32601);
+}
+
+/// Wiki 图像资产路由：token 即凭证——无凭据可命中（不落入 API Key 鉴权层）；
+/// 不存在的 token / 路径穿越一律 404，不能读取任意文件。
+#[tokio::test]
+async fn wiki_asset_route_serves_by_token_and_rejects_traversal() {
+    let state = test_state().await;
+    let app = build_router(state.clone(), test_shared(&state, None, None));
+
+    // 无任何 Bearer 也应能命中 assets 路由（<img> 无法携带凭据），返回 404 而非 401/403。
+    for path in [
+        "/api/wiki/projects/asset-p/assets/no-such-token/page-1.jpg",
+        "/api/wiki/projects/asset-p/assets/..%2F..%2Fwaliapi.db/x",
+        "/api/wiki/projects/asset-p/assets/t/../../etc/passwd",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(request("GET", path, None))
+            .await
+            .unwrap();
+        assert!(
+            matches!(response.status(), StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST),
+            "路径应 404/400 而非泄露文件: {path} => {}",
+            response.status()
+        );
+    }
+}
 
 async fn setup() -> (
     Arc<AppState>,
@@ -566,12 +768,18 @@ async fn rag_reasoning_levels_reach_the_canonical_gateway_body_without_claiming_
                 json!({"requested":level,"status":"requested"})
             );
             assert_eq!(sent["reasoning_effort"], level);
+            // 档位与 thinking 联动（用户要求）：启用类→enabled，none→disabled
+            assert_eq!(
+                sent["thinking"]["type"],
+                if level == "none" { "disabled" } else { "enabled" }
+            );
         } else {
             assert!(result.get("reasoning").is_none());
             assert!(sent.get("reasoning_effort").is_none());
+            assert!(sent.get("thinking").is_none());
         }
         assert_eq!(sent["model"], "chat-test");
-        for provider_field in ["thinking", "enable_thinking", "reasoning"] {
+        for provider_field in ["enable_thinking", "reasoning"] {
             assert!(sent.get(provider_field).is_none());
         }
     }

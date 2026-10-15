@@ -136,7 +136,12 @@ fn build_router(state: Arc<AppState>, shared: SharedState) -> Router {
         // 统一解析（X-Request-Id > Wali-Trace-Id > 生成 UUIDv4）、回写请求头、响应头回显。
         .layer(middleware::from_fn(super::request_id::middleware));
 
-    let gateway_router = data_plane_router.merge(kb_wiki_router).merge(mcp_router);
+    let gateway_router = data_plane_router
+        .merge(kb_wiki_router)
+        .merge(mcp_router)
+        // Wiki 图像资产：token 即凭证，免 Bearer（<img> 请求无法携带自定义头）、
+        // 不记日志；故脱离 kb_wiki_router 的 require_read_access 层单独装配。
+        .merge(crate::services::wiki::routes::assets_router());
 
     Router::new()
         .merge(gateway_router)

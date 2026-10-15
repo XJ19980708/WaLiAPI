@@ -171,3 +171,5 @@ Docker 部署：`docker compose up -d --build`（多阶段构建，运行时非 
 - 渠道相关改动常涉及多处的模型映射与 Key 选择逻辑（`core/proxy.rs` 与 `endpoint_executor/` 两条转发路径都要覆盖）。
 - 桌面端窗口配置中 `dragDropEnabled: false` 是有意为之（Tauri v2 会吞掉 HTML5 drop 事件），不要改回。
 - 仓库根目录的 `waliapi_build_complete_20260718.md`、`waliapi_usage_guide_20260718.md` 是早期搭建记录，内容可能过时，参考 `README.md` 和 `docs/` 下的设计文档为准。
+- **⚠️ 强制（用户明确要求，违反视为失误）**：每次交付给用户的编译/打包测试产物，文件名必须追加构建时间戳后缀（格式 `YYYYMMDD-HHMMSS`，如 `WaLiAPI_0.4.0_x64-setup-20261010-101106.exe`），防止同一版本号下新产物覆盖旧产物导致无法回滚（历史教训：新版闪退、旧版被覆盖找不回）。**执行方式（硬流程，勿裸跑）**：构建一律调用 `scripts\build-nsis.bat`（内部自动 `pnpm tauri build --bundles nsis` + 构建结束立即复制带时间戳副本 + 打印交付文件名）；若因故未走脚本，构建完成后必须手动 `copy /Y ...\WaLiAPI_<ver>_x64-setup.exe ...\WaLiAPI_<ver>_x64-setup-<时间戳>.exe` 并交付带时间戳文件名。不改项目版本号。
+- **注意：涉及本文件(AGENTS.md)的本地未提交改动，禁止用 `git reset --hard` / `git checkout -- AGENTS.md` 丢弃**——它承载用户持久偏好，丢弃即失忆；需用 `git stash` 暂存、切分支后 `git stash pop` 恢复。

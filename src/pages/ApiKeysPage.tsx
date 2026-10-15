@@ -1,8 +1,8 @@
 import { useEffect, useState, useMemo } from "react";
-import { apiKeyApi, channelApi, authApi, kbApi, type KnowledgeBase } from "../lib/api";
+import { apiKeyApi, channelApi, authApi, kbApi, wikiApi, type KnowledgeBase, type WikiProject } from "../lib/api";
 import type { ApiKey, CreateApiKeyInput, ApiKeyStats, Channel, AuthAccount } from "../types";
 import { formatTime } from "../lib/constants";
-import { Plus, Key, Trash2, Power, X, Check, Copy, CalendarClock, Database, Activity, Clock, Zap, ChevronDown, ChevronRight, Pencil, AlertTriangle } from "lucide-react";
+import { Plus, Key, Trash2, Power, X, Check, Copy, CalendarClock, Database, BookOpen, Activity, Clock, Zap, ChevronDown, ChevronRight, Pencil, AlertTriangle } from "lucide-react";
 import { writeClipboard } from "../lib/runtime";
 import { activeMappingFroms } from "../hooks/useModelMappings";
 
@@ -59,6 +59,7 @@ export function ApiKeysPage() {
   const [stats, setStats] = useState<Record<string, ApiKeyStats>>({});
   const [showForm, setShowForm] = useState(false);
   const [knowledgeKey, setKnowledgeKey] = useState<ApiKey | null>(null);
+  const [wikiKey, setWikiKey] = useState<ApiKey | null>(null);
   const [editKey, setEditKey] = useState<ApiKey | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ApiKey | null>(null);
@@ -260,6 +261,9 @@ export function ApiKeysPage() {
                   <button onClick={() => setKnowledgeKey(k)} className="action-secondary px-3 py-2" title="知识库查询权限" aria-label={`配置 ${k.name} 的知识库查询权限`}>
                     <Database size={16} />
                   </button>
+                  <button onClick={() => setWikiKey(k)} className="action-secondary px-3 py-2" title="Wiki 查询权限" aria-label={`配置 ${k.name} 的 Wiki 查询权限`}>
+                    <BookOpen size={16} />
+                  </button>
                   <button onClick={() => setEditKey(k)} className="action-secondary px-3 py-2" title="编辑">
                     <Pencil size={16} />
                   </button>
@@ -289,6 +293,7 @@ export function ApiKeysPage() {
       )}
 
       {knowledgeKey && <KnowledgeAccessDialog apiKey={knowledgeKey} onClose={() => setKnowledgeKey(null)} />}
+      {wikiKey && <WikiAccessDialog apiKey={wikiKey} onClose={() => setWikiKey(null)} />}
       <DeleteConfirmDialog
         target={deleteTarget}
         onClose={() => setDeleteTarget(null)}
@@ -336,6 +341,61 @@ function KnowledgeAccessDialog({ apiKey, onClose }: { apiKey: ApiKey; onClose: (
               <input type="checkbox" checked={selected.includes(kb.id)} disabled={saving}
                 onChange={e => setSelected(ids => e.target.checked ? [...ids, kb.id] : ids.filter(id => id !== kb.id))} />
               <span className="text-sm">{kb.name}<span className="ml-2 text-xs text-slate-400">{kb.embedding_model || "默认 Embedding"}</span></span>
+            </label>
+          ))}
+        </div>
+        {error && <p role="alert" className="mt-3 text-sm text-red-600">{error}</p>}
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={onClose} disabled={saving} className="action-secondary">取消</button>
+          <button onClick={save} disabled={loading || saving} className="action-primary disabled:opacity-50">{saving ? "保存中…" : "保存权限"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WikiAccessDialog({ apiKey, onClose }: { apiKey: ApiKey; onClose: () => void }) {
+  const [projects, setProjects] = useState<WikiProject[]>([]);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([wikiApi.getProjects(), apiKeyApi.getWikiAccess(apiKey.id)]).then(([list, ids]) => {
+      if (!cancelled) { setProjects(list); setSelected(ids); setLoading(false); }
+    }).catch(e => { if (!cancelled) setError(String(e)); });
+    return () => { cancelled = true; };
+  }, [apiKey.id]);
+  // 弹窗期间锁定 body 滚动（项目刚性约定）。
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+  const save = async () => {
+    setSaving(true); setError("");
+    try { await apiKeyApi.setWikiAccess(apiKey.id, selected); onClose(); }
+    catch (e) { setError(String(e)); }
+    finally { setSaving(false); }
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+      <div role="dialog" aria-modal="true" aria-labelledby="wiki-access-title" className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 id="wiki-access-title" className="font-semibold">Wiki 查询权限 · {apiKey.name}</h2>
+          <button onClick={onClose} disabled={saving} aria-label="关闭"><X size={18} /></button>
+        </div>
+        <p className="mb-4 text-xs text-slate-500">新建密钥默认授权全部现有 Wiki 项目；新建 Wiki 项目默认授权全部已有密钥。可取消勾选并保存以撤销查询权限。</p>
+        <p className="mb-4 text-sm text-slate-500">允许该 Key 通过 MCP 只读查询勾选的 Wiki 项目（列表/页面/检索/问答/标签/图谱）。未勾选即无权限；不能创建、修改或删除。MCP 还需开启该项目的 MCP 开关。</p>
+        <div className="max-h-72 space-y-2 overflow-y-auto">
+          {loading && !error && <p>正在加载…</p>}
+          {!loading && projects.length === 0 && <p className="text-sm text-slate-500">请先在“服务 → Wiki”创建项目。</p>}
+          {projects.map(p => (
+            <label key={p.id} className="flex items-center gap-3 rounded-xl border border-slate-200 p-3">
+              <input type="checkbox" checked={selected.includes(p.id)} disabled={saving}
+                onChange={e => setSelected(ids => e.target.checked ? [...ids, p.id] : ids.filter(id => id !== p.id))} />
+              <span className="text-sm">{p.name}<span className="ml-2 text-xs text-slate-400">{p.page_count} 页</span></span>
             </label>
           ))}
         </div>

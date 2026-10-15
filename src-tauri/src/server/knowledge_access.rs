@@ -21,6 +21,7 @@ use tracing::Instrument;
 #[derive(Clone)]
 pub struct KnowledgeAccess {
     pub kb_ids: Vec<String>,
+    pub wiki_project_ids: Vec<String>,
     pub headers: HeaderMap,
 }
 
@@ -31,6 +32,41 @@ pub async fn get_grants(pool: &sqlx::SqlitePool, id: &str) -> Result<Vec<String>
     .bind(id)
     .fetch_all(pool)
     .await
+}
+
+/// Wiki 项目的查询授权（与 RAG 平行的独立维度）。
+pub async fn get_wiki_grants(pool: &sqlx::SqlitePool, id: &str) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT project_id FROM api_key_wiki_access WHERE api_key_id = ? ORDER BY project_id",
+    )
+    .bind(id)
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn set_wiki_grants(
+    pool: &sqlx::SqlitePool,
+    id: &str,
+    project_ids: &[String],
+) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    // 即使撤销全部授权，也先检查 Key 存在；外键保证不存在的项目不会留下半次更新。
+    sqlx::query_scalar::<_, String>("SELECT id FROM api_keys WHERE id = ?")
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM api_key_wiki_access WHERE api_key_id = ?")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    for project_id in project_ids.iter().collect::<std::collections::BTreeSet<_>>() {
+        sqlx::query("INSERT INTO api_key_wiki_access (api_key_id, project_id) VALUES (?, ?)")
+            .bind(id)
+            .bind(project_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await
 }
 
 pub async fn set_grants(
@@ -126,10 +162,19 @@ async fn authenticate_inner(
                 "Knowledge access lookup failed",
             )
         })?;
-    if kb_ids.is_empty() {
+    let wiki_project_ids = get_wiki_grants(&shared.state.db.pool, &key.id)
+        .await
+        .map_err(|_| {
+            QueryError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Wiki access lookup failed",
+            )
+        })?;
+    // RAG 与 Wiki 任一有授权即可通过入口；两者皆空才拒绝。
+    if kb_ids.is_empty() && wiki_project_ids.is_empty() {
         return Err(QueryError::new(
             StatusCode::FORBIDDEN,
-            "请在密钥页面授予该 API Key 知识库查询权限",
+            "请在密钥页面授予该 API Key 知识库或 Wiki 查询权限",
         ));
     }
     // 不携带客户端的路由覆盖、会话或缓存头，只保留经验证的身份。
@@ -140,7 +185,11 @@ async fn authenticate_inner(
             .parse()
             .map_err(|_| QueryError::new(StatusCode::UNAUTHORIZED, "Invalid API key"))?,
     );
-    Ok(KnowledgeAccess { kb_ids, headers })
+    Ok(KnowledgeAccess {
+        kb_ids,
+        wiki_project_ids,
+        headers,
+    })
 }
 
 impl KnowledgeAccess {
@@ -173,6 +222,39 @@ impl KnowledgeAccess {
             ));
         }
         Ok(kb)
+    }
+
+    /// Wiki 项目的查询授权校验（与 require_kb 平行：授权 + 启用 + MCP 暴露）。
+    pub async fn require_wiki_project(
+        &self,
+        shared: &SharedState,
+        project_id: &str,
+        mcp: bool,
+    ) -> Result<(), QueryError> {
+        if project_id.is_empty() {
+            return Err(QueryError::new(
+                StatusCode::BAD_REQUEST,
+                "project_id is required",
+            ));
+        }
+        if !self.wiki_project_ids.iter().any(|id| id == project_id) {
+            return Err(QueryError::new(
+                StatusCode::FORBIDDEN,
+                "Wiki project access denied",
+            ));
+        }
+        let project =
+            crate::services::wiki::repository::WikiRepository::new(shared.state.db.pool.clone())
+                .get_project(project_id)
+                .await
+                .map_err(|_| QueryError::new(StatusCode::NOT_FOUND, "Wiki project not found"))?;
+        if project.status != 1 || (mcp && project.mcp_enabled != 1) {
+            return Err(QueryError::new(
+                StatusCode::FORBIDDEN,
+                "Wiki project is not enabled for this endpoint",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -453,6 +535,7 @@ async fn ask_inner(
         input.strict_retrieval,
         input.candidate_k,
         input.reasoning_effort.as_deref(),
+        input.temperature,
     ))
     .await;
     match result {

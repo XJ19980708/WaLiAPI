@@ -155,6 +155,24 @@ export async function listen<T>(
   return () => controller.abort();
 }
 
+/**
+ * 监听文件拖放 —— 桌面端必须走这里（tauri OS 级拖放事件）。
+ * dragDropEnabled:true 时 tauri 接管拖放并 emit 事件，WebView 的 HTML5 drop **不会触发**，
+ * 因此桌面端只能通过本函数拿文件路径；浏览器部署返回 no-op（由组件上的 HTML5 onDrop 处理）。
+ */
+export async function onFileDrop(cb: (paths: string[]) => void): Promise<() => void> {
+  if (!isTauriRuntime()) return () => {};
+  const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+  const unlisten = await getCurrentWebviewWindow().onDragDropEvent((event) => {
+    const payload = event.payload as { type: string; paths?: string[] };
+    if (payload.type === "drop") {
+      const paths = payload.paths ?? [];
+      if (paths.length > 0) cb(paths);
+    }
+  });
+  return unlisten;
+}
+
 export async function openExternalUrl(url: string): Promise<void> {
   if (isTauriRuntime()) {
     const { openUrl } = await import("@tauri-apps/plugin-opener");

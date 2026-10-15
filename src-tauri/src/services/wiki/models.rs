@@ -12,6 +12,10 @@ pub struct WikiProject {
     pub chat_model: Option<String>,
     pub ingest_channel_id: Option<String>,
     pub chat_channel_id: Option<String>,
+    pub pdf_ocr_channel_id: Option<String>,
+    pub pdf_ocr_model: Option<String>,
+    pub reasoning_effort: Option<String>,
+    pub temperature: Option<f64>,
     pub mcp_enabled: i64,
     pub source_count: i64,
     pub page_count: i64,
@@ -29,6 +33,10 @@ pub struct CreateProjectInput {
     pub chat_model: Option<String>,
     pub ingest_channel_id: Option<String>,
     pub chat_channel_id: Option<String>,
+    pub pdf_ocr_channel_id: Option<String>,
+    pub pdf_ocr_model: Option<String>,
+    pub reasoning_effort: Option<String>,
+    pub temperature: Option<f64>,
     pub schema_text: Option<String>,
 }
 
@@ -42,6 +50,10 @@ pub struct UpdateProjectInput {
     pub chat_model: Option<String>,
     pub ingest_channel_id: Option<String>,
     pub chat_channel_id: Option<String>,
+    pub pdf_ocr_channel_id: Option<String>,
+    pub pdf_ocr_model: Option<String>,
+    pub reasoning_effort: Option<String>,
+    pub temperature: Option<f64>,
     pub mcp_enabled: Option<i64>,
 }
 
