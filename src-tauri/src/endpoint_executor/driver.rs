@@ -846,6 +846,7 @@ mod rag_budget_tests {
                 model: "embedding-test".into(),
                 stream: false,
                 trace_id: Some("budget-test".into()),
+                client_name: None,
             },
             forward_json: body.clone(),
             sanitized_log_json: body,
@@ -1244,6 +1245,7 @@ async fn write_non_stream_log(
             .upstream_type
             .clone()
             .unwrap_or_else(|| "channel".to_string()),
+        client_name: audited.envelope.client_name.clone(),
     };
     let log_id = log.id.clone();
     if let Err(e) = repo.create_log(&log).await {
@@ -1358,6 +1360,7 @@ async fn write_stream_precommit_failure_log_with_meta(
         upstream_type: last_attempt
             .map(|meta| meta.upstream_type.clone())
             .unwrap_or_else(|| "channel".to_string()),
+        client_name: audited.envelope.client_name.clone(),
     };
     let log_id = log.id.clone();
     if let Err(e) = repo.create_log(&log).await {
@@ -2119,6 +2122,7 @@ impl StreamLogFinalizer {
             client_cancelled: Some(i64::from(client_cancelled)),
             stream_committed: Some(1),
             upstream_type: self.upstream_type.clone(),
+            client_name: self.audited.envelope.client_name.clone(),
         };
         let log_id = log.id.clone();
         if let Err(e) = self.repo.create_log(&log).await {
@@ -3203,6 +3207,7 @@ mod tests {
                 model: "m".into(),
                 stream: true,
                 trace_id: None,
+                client_name: None,
             },
             forward_json: json!({"model": "m", "messages": []}),
             sanitized_log_json: json!({"model": "m", "messages": []}),

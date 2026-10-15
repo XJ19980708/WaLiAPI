@@ -122,6 +122,7 @@ fn audited() -> AuditedRequest {
             model: "gpt-t12".into(),
             stream: false,
             trace_id: None,
+            client_name: None,
         },
         forward_json: body.clone(),
         sanitized_log_json: body,

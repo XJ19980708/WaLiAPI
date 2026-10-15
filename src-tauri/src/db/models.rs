@@ -688,6 +688,9 @@ pub struct RequestLog {
     pub upstream_type: String,
     /// Prompt tokens served from upstream cache (migration 026).
     pub cached_tokens: i64,
+    /// 调用来源：请求来自哪个下游接入软件（从请求头识别的友好名称，
+    /// 迁移 047）。历史行为 NULL，展示为 "-"。
+    pub client_name: Option<String>,
 }
 
 /// Lightweight row used by the audit-log list. Large request/response bodies
@@ -731,6 +734,8 @@ pub struct RequestLogSummary {
     pub client_cancelled: Option<i64>,
     pub stream_committed: Option<i64>,
     pub upstream_type: String,
+    /// 调用来源（迁移 047）：下游接入软件的友好名称，历史行为 NULL。
+    pub client_name: Option<String>,
     pub detail_level: String,
     pub started_at: Option<String>,
     pub request_body_bytes: i64,
@@ -782,6 +787,7 @@ impl Default for RequestLog {
             stream_committed: None,
             upstream_type: "channel".into(),
             cached_tokens: 0,
+            client_name: None,
         }
     }
 }

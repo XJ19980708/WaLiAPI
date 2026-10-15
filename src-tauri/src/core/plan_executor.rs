@@ -378,6 +378,7 @@ mod tests {
                 model: "m".into(),
                 stream: false,
                 trace_id: None,
+                client_name: None,
             },
             forward_json: json!({ "model": "m", "messages": [] }),
             sanitized_log_json: json!({ "model": "m", "messages": [] }),

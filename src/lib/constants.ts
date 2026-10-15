@@ -125,3 +125,14 @@ export function formatTime(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleString("zh-CN", { hour12: false });
 }
+
+// 审计日志时间列专用：时间与日期上下两行展示。
+// 上一行是 HH:mm:ss（视觉焦点），下一行是 YYYY/MM/DD（辅助信息）。
+export function formatTimeParts(iso: string): { time: string; date: string } {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return { time: "-", date: "-" };
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  const time = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  const date = `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}`;
+  return { time, date };
+}

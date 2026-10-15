@@ -73,6 +73,7 @@ fn log(
         sanitized: 0,
         blocked_reason: None,
         trace_id: None,
+        client_name: Some("test-client".into()),
         reasoning_effort: None,
         downstream_protocol: None,
         downstream_endpoint: None,

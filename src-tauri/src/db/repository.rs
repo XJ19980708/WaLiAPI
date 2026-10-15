@@ -1832,8 +1832,8 @@ impl Repository {
         // legacy callers using `..Default::default()` persist NULLs for them.
         let mut tx = self.pool.begin().await?;
         sqlx::query(
-            "INSERT INTO request_logs (id, seq, api_key_id, api_key_name, channel_id, channel_name, model, upstream_model, mode, status_code, prompt_tokens, completion_tokens, total_tokens, cached_tokens, duration_ms, error_message, is_stream, is_retry, created_at, request_body, response_choices, risk_level, risk_score, risk_summary, security_action, sanitized, blocked_reason, trace_id, reasoning_effort, downstream_protocol, downstream_endpoint, route_group, upstream_protocol, upstream_endpoint, provider, codec_version, failure_class, identity_revision, client_cancelled, stream_committed, upstream_type, detail_level)
-             VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM request_logs), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO request_logs (id, seq, api_key_id, api_key_name, channel_id, channel_name, model, upstream_model, mode, status_code, prompt_tokens, completion_tokens, total_tokens, cached_tokens, duration_ms, error_message, is_stream, is_retry, created_at, request_body, response_choices, risk_level, risk_score, risk_summary, security_action, sanitized, blocked_reason, trace_id, reasoning_effort, downstream_protocol, downstream_endpoint, route_group, upstream_protocol, upstream_endpoint, provider, codec_version, failure_class, identity_revision, client_cancelled, stream_committed, upstream_type, detail_level, client_name)
+             VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM request_logs), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(&log.id)
         .bind(&log.api_key_id)
@@ -1876,6 +1876,7 @@ impl Repository {
         .bind(log.stream_committed)
         .bind(&log.upstream_type)
         .bind(policy.detail_level.as_str())
+        .bind(&log.client_name)
         .execute(&mut *tx)
         .await?;
         // 用量统计 UPSERT:同一事务内累加,与日志同生共死。
@@ -2370,7 +2371,7 @@ impl Repository {
              is_stream, is_retry, created_at, risk_level, risk_score, risk_summary, security_action, \
              sanitized, blocked_reason, trace_id, reasoning_effort, downstream_protocol, downstream_endpoint, \
              route_group, upstream_protocol, upstream_endpoint, provider, codec_version, failure_class, \
-             identity_revision, client_cancelled, stream_committed, upstream_type, \
+             identity_revision, client_cancelled, stream_committed, upstream_type, client_name, \
              COALESCE(detail_level, 'detailed') AS detail_level, started_at, \
              COALESCE(length(CAST(request_body AS BLOB)), 0) AS request_body_bytes, \
              COALESCE(length(CAST(response_choices AS BLOB)), 0) AS response_choices_bytes, \

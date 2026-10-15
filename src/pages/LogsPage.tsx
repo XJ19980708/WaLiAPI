@@ -4,7 +4,7 @@ import { logApi, channelApi } from "../lib/api";
 import type { DeleteLogsInput, DeleteLogsReport, CleanupChannelInput, CleanupChannelReport } from "../lib/api";
 import type { Channel } from "../types";
 import type { RequestLog, SecurityFinding } from "../types";
-import { formatTime, formatDuration, formatNumber } from "../lib/constants";
+import { formatTimeParts, formatDuration, formatNumber } from "../lib/constants";
 import { writeClipboard } from "../lib/runtime";
 import { contentToString, requestLogSource, responseLogSource } from "../lib/auditLog";
 import { Select, type SelectOption } from "../components/Select";
@@ -681,6 +681,7 @@ export function LogsPage() {
                       <th className="w-[10%] truncate px-2 py-3 text-left font-medium whitespace-nowrap">时间</th>
                       {showTraceColumn && <th className="w-[8%] truncate px-2 py-3 text-left font-medium whitespace-nowrap">Trace ID</th>}
                       <th className="w-[8%] truncate px-2 py-3 text-left font-medium whitespace-nowrap">密钥</th>
+                      <th className="w-[7%] truncate px-2 py-3 text-left font-medium whitespace-nowrap">来源</th>
                       <th className="w-[10%] truncate px-2 py-3 text-left font-medium whitespace-nowrap">上游</th>
                       <th className="px-2 py-3 text-left font-medium">模型</th>
                       <th className="w-[8%] truncate px-2 py-3 text-left font-medium whitespace-nowrap">推理档位</th>
@@ -812,6 +813,32 @@ export function LogsPage() {
 
 // ─── LogRow ──────────────────────────────────────────────────────────────────
 
+// 时间列：上行时刻（视觉焦点）、下行日期（辅助），层级分明便于扫读。
+function TimeCell({ iso }: { iso: string }) {
+  const { time, date } = formatTimeParts(iso);
+  return (
+    <div className="flex flex-col leading-tight">
+      <span className="text-[13px] font-medium text-foreground tabular-nums">{time}</span>
+      <span className="text-[10px] text-muted-foreground/70 tabular-nums">{date}</span>
+    </div>
+  );
+}
+
+// 调用来源列：识别出的下游接入软件名，未知显示 "-"。
+function ClientNameCell({ clientName }: { clientName?: string | null }) {
+  if (!clientName) {
+    return <span className="text-muted-foreground/50">-</span>;
+  }
+  return (
+    <span
+      className="inline-flex max-w-full items-center truncate rounded-md bg-teal-500/10 px-1.5 py-0.5 text-[11px] font-medium text-teal-700"
+      title={clientName}
+    >
+      {clientName}
+    </span>
+  );
+}
+
 function LogRow({
   log,
   detail,
@@ -847,11 +874,16 @@ function LogRow({
           </button>
         </td>
         <td className="px-2 py-2.5 text-xs text-muted-foreground/60 font-mono whitespace-nowrap">{log.seq != null ? `#${log.seq}` : "-"}</td>
-        <td className="px-2 py-2.5 text-xs text-muted-foreground whitespace-nowrap overflow-hidden">{formatTime(log.created_at)}</td>
+        <td className="px-2 py-2.5 text-xs whitespace-nowrap overflow-hidden">
+          <TimeCell iso={log.created_at} />
+        </td>
         {showTraceColumn && (
           <td className="px-2 py-2.5 text-xs font-mono text-slate-500 whitespace-nowrap overflow-hidden truncate max-w-[180px]" title={log.trace_id || undefined}>{log.trace_id || "-"}</td>
         )}
         <td className="px-2 py-2.5 text-xs overflow-hidden truncate">{log.api_key_name || "-"}</td>
+        <td className="px-2 py-2.5 text-xs overflow-hidden truncate">
+          <ClientNameCell clientName={log.client_name} />
+        </td>
         <td className="px-2 py-2.5 text-xs overflow-hidden max-w-[180px]">
           <div className="flex flex-col gap-1 truncate">
             <span className="truncate" title={log.channel_name || undefined}>{log.channel_name || "-"}</span>
@@ -923,7 +955,7 @@ function LogRow({
       </tr>
       {expanded && (
         <tr>
-          <td colSpan={showTraceColumn ? 13 : 12} className="px-4 py-4 bg-slate-50/80 border-b border-border align-top">
+          <td colSpan={showTraceColumn ? 14 : 13} className="px-4 py-4 bg-slate-50/80 border-b border-border align-top">
             <div className="min-w-0 max-w-full overflow-hidden">
               {detailLoading ? (
                 <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
@@ -1227,8 +1259,8 @@ function LogDetail({ log }: { log: RequestLog }) {
         </div>
       )}
 
-      {/* ── Trace ID ── */}
-      {(log.trace_id || log.downstream_endpoint) && (
+      {/* ── Trace ID / 调用来源 ── */}
+      {(log.trace_id || log.downstream_endpoint || log.client_name) && (
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-slate-200 bg-white p-3">
         {log.trace_id && (
           <>
@@ -1241,6 +1273,14 @@ function LogDetail({ log }: { log: RequestLog }) {
           <>
             <span className="text-xs text-slate-500">端点:</span>
             <span className="text-xs font-mono text-slate-700 break-all">{log.downstream_endpoint}</span>
+          </>
+        )}
+        {log.client_name && (
+          <>
+            <span className="text-xs text-slate-500">调用来源:</span>
+            <span className="inline-flex items-center rounded-md bg-teal-500/10 px-1.5 py-0.5 text-[11px] font-medium text-teal-700">
+              {log.client_name}
+            </span>
           </>
         )}
       </div>

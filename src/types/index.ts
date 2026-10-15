@@ -234,6 +234,8 @@ export interface RequestLog {
   client_cancelled: boolean | null;
   stream_committed: boolean | null;
   upstream_type: "channel" | "auth_account" | string;
+  /** 调用来源：请求来自哪个下游接入软件（迁移 047），历史行为 null。 */
+  client_name?: string | null;
   /** 日志记录级别；摘要列表也会返回该字段。 */
   detail_level?: "basic" | "brief" | "detailed" | string;
   /** 基本日志不提供正文，详细日志可按需加载。 */

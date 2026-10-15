@@ -81,6 +81,7 @@ pub async fn embed(
             model: model.to_string(),
             stream: false,
             trace_id: Some(format!("kb-internal_{}", uuid::Uuid::new_v4())),
+            client_name: Some("WaLiAPI 知识库".to_string()),
         },
         &crate::security::SecuritySettings::default(),
         None,

@@ -510,6 +510,7 @@ mod tests {
             sanitized: 0,
             blocked_reason: None,
             trace_id: None,
+            client_name: None,
             reasoning_effort: None,
             downstream_protocol: None,
             downstream_endpoint: None,

@@ -74,6 +74,10 @@ pub struct RequestEnvelope {
     pub model: String,
     pub stream: bool,
     pub trace_id: Option<String>,
+    /// 调用来源（迁移 047）：从下游请求头识别的接入软件友好名称。
+    /// 识别失败为 `None`；仅用于审计日志展示，不参与路由/鉴权。
+    #[serde(default)]
+    pub client_name: Option<String>,
 }
 
 /// Audited request produced by the gate (T00 decision 1 / T03 spec).
@@ -393,6 +397,7 @@ pub fn gate_dispatch(
                 model,
                 stream,
                 trace_id,
+                client_name: None,
             };
             audit_envelope(envelope, settings, budget, custom_rules)
         }

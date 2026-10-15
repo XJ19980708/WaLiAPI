@@ -81,6 +81,7 @@ fn full_log(channel_id: Option<&str>, channel_name: Option<&str>) -> models::Req
         client_cancelled: Some(0),
         stream_committed: Some(1),
         upstream_type: "channel".into(),
+        client_name: Some("test-client".into()),
     }
 }
 

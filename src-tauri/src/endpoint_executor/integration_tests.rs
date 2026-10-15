@@ -128,6 +128,7 @@ fn audited(
             model: model.to_string(),
             stream: false,
             trace_id: None,
+            client_name: None,
         },
         forward_json: body.clone(),
         sanitized_log_json: body,

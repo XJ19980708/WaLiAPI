@@ -233,7 +233,11 @@ impl Provider for WorkBuddyProvider {
         }
         // 上游对未显式声明 reasoning_effort 的请求返回 400（11150），
         // 按渠道账号类型统一注入默认档位（medium），模型级差异由上游自行裁决
-        if body.get("reasoning_effort").map(Value::is_null).unwrap_or(true) {
+        if body
+            .get("reasoning_effort")
+            .map(Value::is_null)
+            .unwrap_or(true)
+        {
             body["reasoning_effort"] = Value::String(WORKBUDDY_DEFAULT_REASONING_EFFORT.into());
         }
         let response = self
