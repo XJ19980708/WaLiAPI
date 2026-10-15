@@ -636,7 +636,7 @@ public class AnthropicTest {
                 <KeyRound size={13} /> API Key
               </div>
               <div className="flex gap-2">
-                <div className="relative flex-1">
+                <div className="relative min-w-0 flex-1">
                   <Select
                     size="sm"
                     value={selKey}
@@ -656,7 +656,7 @@ public class AnthropicTest {
                     if (full) { await copy(full, "key"); }
                   }}
                   disabled={!selKey}
-                  className="action-secondary px-3 py-2.5 disabled:opacity-50"
+                  className="action-secondary shrink-0 px-3 py-2.5 disabled:opacity-50"
                   title="复制完整 Key"
                 >
                   {copied === "key" ? <Check size={16} className="text-emerald-600" /> : keyValueLoading ? <Loader2 size={16} className="animate-spin" /> : <Copy size={16} />}
@@ -678,7 +678,7 @@ public class AnthropicTest {
                 <Bot size={13} /> Model
               </div>
               <div className="flex gap-2">
-                <div className="relative flex-1">
+                <div className="relative min-w-0 flex-1">
                   <Select
                     size="sm"
                     value={selModel}
@@ -687,6 +687,10 @@ public class AnthropicTest {
                       localStorage.setItem(modelStorageKey, v);
                     }}
                     placeholder="请先配置渠道或登录账号"
+                    // 模型多时好选：≥8 个出搜索框，弹层加宽为双列网格
+                    searchThreshold={8}
+                    gridColumns={2}
+                    wideListWidth={480}
                     options={[
                       ...(models.length === 0 ? [{ value: "", label: "请先配置渠道或登录账号" }] : []),
                       ...(modelCategories.channel.length > 0
@@ -701,7 +705,7 @@ public class AnthropicTest {
                     ]}
                   />
                 </div>
-                <button onClick={() => selModel && copy(selModel, "model")} disabled={!selModel} className="action-secondary px-3 py-2.5 disabled:opacity-50" title="复制 Model">
+                <button onClick={() => selModel && copy(selModel, "model")} disabled={!selModel} className="action-secondary shrink-0 px-3 py-2.5 disabled:opacity-50" title="复制 Model">
                   {copied === "model" ? <Check size={16} className="text-emerald-600" /> : <Copy size={16} />}
                 </button>
               </div>
