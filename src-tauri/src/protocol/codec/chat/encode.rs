@@ -21,6 +21,7 @@ const SUPPORTED_TOP_LEVEL: &[&str] = &[
     "tools",
     "tool_choice",
     "reasoning_effort",
+    "thinking",
     "store",
     "stream_options",
 ];
@@ -204,7 +205,11 @@ pub fn encode_chat_to_messages(
     // reasoning_effort -> thinking (fail-open mapping, CPA semantics).  Only
     // when the downstream asked for a reasoning effort; absent effort leaves
     // thinking unset so the upstream applies its own default.
-    if let Some(effort) = body.get("reasoning_effort").and_then(Value::as_str) {
+    // 显式 thinking 优先：Wiki/RAG 构造请求时按项目档位直接写入 thinking{type:enabled/disabled}，
+    // 直接透传不覆盖；否则按 reasoning_effort 映射（fail-open）。
+    if let Some(t) = body.get("thinking") {
+        claude.insert("thinking".to_string(), t.clone());
+    } else if let Some(effort) = body.get("reasoning_effort").and_then(Value::as_str) {
         let e = effort.to_ascii_lowercase();
         match e.as_str() {
             // Some upstream models always reason and reject

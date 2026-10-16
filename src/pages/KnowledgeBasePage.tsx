@@ -2,6 +2,7 @@ import { KnowledgeConnectionPanel } from "../components/KnowledgeConnectionPanel
 import { Select } from "../components/Select";
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { Link as RouterLink, useLocation } from "react-router-dom";
+import { onFileDrop, isTauriRuntime } from "../lib/runtime";
 import {
   KnowledgeBase,
   KbDocument,
@@ -83,10 +84,72 @@ import { PromptTemplatesSection } from "../components/PromptTemplatesSection";
 type ServiceTab = "knowledge" | "wiki" | "mcp" | "skills" | "prompts";
 type KbTab = "documents" | "sources" | "search" | "ask" | "settings" | "index" | "mcp";
 
+// ── Wiki 摄入进度（模块级内存状态）────────────────────────────────
+// 进度提升到模块级：切换一级侧边栏（仪表盘/设置/日志）时「服务」页面整体卸载，
+// 组件内 state 会丢失 → 返回时进度条"有概率隐藏"（依赖实时事件流，挂载瞬间无新事件即空白）。
+// 模块级状态在卸载期间持续存活，回到「源」tab 立即恢复显示；完成/失败/取消后自动删除。
+type WikiProgressEntry = { stage: string; progress: number; detail: string; filename: string };
+let moduleWikiProgress: Record<string, WikiProgressEntry> = {};
+const wikiProgressSubs = new Set<() => void>();
+function patchWikiProgress(updater: (prev: Record<string, WikiProgressEntry>) => Record<string, WikiProgressEntry>) {
+  moduleWikiProgress = updater(moduleWikiProgress);
+  wikiProgressSubs.forEach((fn) => fn());
+}
+function useModuleWikiProgress(): Record<string, WikiProgressEntry> {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const fn = () => setTick((t) => t + 1);
+    wikiProgressSubs.add(fn);
+    return () => { wikiProgressSubs.delete(fn); };
+  }, []);
+  return moduleWikiProgress;
+}
+
+// ── 通用确认弹窗 ──────────────────────────────────────────────
+// Tauri WebView2 会抑制原生 window.confirm（直接继续执行），破坏性操作必须用
+// 自绘弹窗二次确认（项目约定：弹窗期间锁定 body 滚动）。
+function ConfirmDialog({ message, confirmLabel = "删除", onCancel, onConfirm }: {
+  message: string; confirmLabel?: string; onCancel: () => void; onConfirm: () => void;
+}) {
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={onCancel}>
+      <div role="dialog" aria-modal="true" className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl" onClick={e => e.stopPropagation()}>
+        <h3 className="text-sm font-semibold text-slate-900">确认删除</h3>
+        <p className="mt-2 text-sm text-slate-500">{message}</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={onCancel} className="action-secondary">取消</button>
+          <button onClick={onConfirm} className="action-primary bg-red-600 hover:bg-red-700">{confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function KnowledgeBasePage() {
   const location = useLocation();
   const initialTab: ServiceTab = location.pathname.includes("/mcp") ? "mcp" : location.pathname.includes("/skills") ? "skills" : location.pathname.includes("/prompts") ? "prompts" : location.pathname.includes("/wiki") ? "wiki" : "knowledge";
   const [serviceTab, setServiceTab] = useState<ServiceTab>(initialTab);
+
+  // 实时测量 page-header 高度 → CSS 变量 --wali-page-header-h。
+  // 详情页（RAG/Wiki）子菜单用 sticky top:var(...) 做吸顶阈值，与 header 实际高度
+  // 精确一致（窗口缩放/字体变化时 ResizeObserver 同步），避免吸顶后"先跟随滚动一小段"。
+  const headerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const apply = () => {
+      document.documentElement.style.setProperty("--wali-page-header-h", `${el.offsetHeight}px`);
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const serviceTabs: { key: ServiceTab; label: string; icon: typeof BookOpen }[] = [
     { key: "knowledge", label: "RAG", icon: BookOpen },
@@ -99,7 +162,7 @@ export function KnowledgeBasePage() {
   return (
     <div className="page-shell space-y-6">
       {/* Page Header */}
-      <div className="page-header sticky top-0 z-30 -mx-7 -mt-7 mb-2 bg-white/90 px-7 py-5 backdrop-blur-md border-b border-slate-100">
+      <div className="page-header sticky top-0 z-30 -mx-7 -mt-7 mb-2 bg-white/90 px-7 py-5 backdrop-blur-md border-b border-slate-100" ref={headerRef}>
         <div>
           <h1 className="page-title">服务</h1>
           <p className="page-subtitle">本地 RAG 知识库 · Wiki 知识图谱 · MCP · Prompt 模板 · 支持 AI Agent 对接</p>
@@ -548,6 +611,7 @@ function KnowledgeBaseSection() {
   const [loading, setLoading] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [kbDeleteTarget, setKbDeleteTarget] = useState<{ message: string; run: () => void } | null>(null);
   const selectedKb = useMemo(
     () => selectedKbId ? kbs.find((kb) => kb.id === selectedKbId) ?? null : null,
     [kbs, selectedKbId],
@@ -587,14 +651,18 @@ function KnowledgeBaseSection() {
   }, []);
 
   const handleDelete = async (id: string) => {
-    if (!confirm("确定删除此 RAG 知识库？所有文档和切片将一并删除。")) return;
-    try {
-      await kbApi.delete(id);
-      await fetchKbs();
-      if (selectedKbId === id) setSelectedKbId(null);
-    } catch (e) {
-      setError(String(e));
-    }
+    setKbDeleteTarget({
+      message: "确定删除此 RAG 知识库？所有文档和切片将一并删除。",
+      run: async () => {
+        try {
+          await kbApi.delete(id);
+          await fetchKbs();
+          if (selectedKbId === id) setSelectedKbId(null);
+        } catch (e) {
+          setError(String(e));
+        }
+      },
+    });
   };
 
   // Toggle KB status (enable/disable) from list view
@@ -654,6 +722,14 @@ function KnowledgeBaseSection() {
             setShowCreate(false);
             await fetchKbs();
           }}
+        />
+      )}
+
+      {kbDeleteTarget && (
+        <ConfirmDialog
+          message={kbDeleteTarget.message}
+          onCancel={() => setKbDeleteTarget(null)}
+          onConfirm={() => { kbDeleteTarget.run(); setKbDeleteTarget(null); }}
         />
       )}
     </>
@@ -894,36 +970,39 @@ function KbDetail({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <button
-          onClick={onBack}
-          className="flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-100"
-        >
-          ← 返回
-        </button>
-        <div className="h-4 w-px bg-slate-200" />
-        <h2 className="text-lg font-semibold text-slate-900">{kb.name}</h2>
-        <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-600">
-          {kb.doc_count} 文档 · {kb.chunk_count} 切片
-        </span>
-      </div>
-
-      {/* Tabs */}
-      <div className="flex gap-1 border-b border-slate-200">
-        {tabs.map(({ key, label, icon: Icon }) => (
+      {/* 顶部操作行 + 子菜单：滚动时钉在 page-header（sticky top-0，约 88px 高）下方 */}
+      <div className="sticky top-[var(--wali-page-header-h,88px)] z-20 -mx-1 space-y-4 rounded-2xl border border-slate-100 bg-white/95 px-4 py-3 backdrop-blur">
+        <div className="flex items-center gap-3">
           <button
-            key={key}
-            onClick={() => setTab(key)}
-            className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm transition-colors ${
-              tab === key
-                ? "border-blue-600 text-blue-600"
-                : "border-transparent text-slate-500 hover:text-slate-700"
-            }`}
+            onClick={onBack}
+            className="flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-100"
           >
-            <Icon size={15} />
-            {label}
+            ← 返回
           </button>
-        ))}
+          <div className="h-4 w-px bg-slate-200" />
+          <h2 className="text-lg font-semibold text-slate-900">{kb.name}</h2>
+          <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-600">
+            {kb.doc_count} 文档 · {kb.chunk_count} 切片
+          </span>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex gap-1 border-b border-slate-200">
+          {tabs.map(({ key, label, icon: Icon }) => (
+            <button
+              key={key}
+              onClick={() => setTab(key)}
+              className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm transition-colors ${
+                tab === key
+                  ? "border-blue-600 text-blue-600"
+                  : "border-transparent text-slate-500 hover:text-slate-700"
+              }`}
+            >
+              <Icon size={15} />
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {tab === "documents" && <DocumentsTab kb={kb} onRefresh={onRefresh} />}
@@ -944,6 +1023,7 @@ function SourcesTab({ kb, onRefresh }: { kb: KnowledgeBase; onRefresh: () => voi
   const [loading, setLoading] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [progressMap, setProgressMap] = useState<Record<string, { progress: number; detail: string }>>({});
+  const [sourceDeleteTarget, setSourceDeleteTarget] = useState<{ message: string; run: () => void } | null>(null);
 
   const fetchSources = useCallback(async () => {
     setLoading(true);
@@ -999,14 +1079,18 @@ function SourcesTab({ kb, onRefresh }: { kb: KnowledgeBase; onRefresh: () => voi
   }, [kb.id, fetchSources, onRefresh]);
 
   const handleDelete = async (sourceId: string) => {
-    if (!confirm("删除此来源？关联的文档将保留但不再标记来源。")) return;
-    try {
-      await kbApi.deleteSource(sourceId, kb.id);
-      await fetchSources();
-      onRefresh();
-    } catch (e) {
-      alert(`删除失败: ${e}`);
-    }
+    setSourceDeleteTarget({
+      message: "删除此来源？关联的文档将保留但不再标记来源。",
+      run: async () => {
+        try {
+          await kbApi.deleteSource(sourceId, kb.id);
+          await fetchSources();
+          onRefresh();
+        } catch (e) {
+          alert(`删除失败: ${e}`);
+        }
+      },
+    });
   };
 
   return (
@@ -1094,6 +1178,14 @@ function SourcesTab({ kb, onRefresh }: { kb: KnowledgeBase; onRefresh: () => voi
             await fetchSources();
             onRefresh();
           }}
+        />
+      )}
+
+      {sourceDeleteTarget && (
+        <ConfirmDialog
+          message={sourceDeleteTarget.message}
+          onCancel={() => setSourceDeleteTarget(null)}
+          onConfirm={() => { sourceDeleteTarget.run(); setSourceDeleteTarget(null); }}
         />
       )}
     </div>
@@ -1379,6 +1471,7 @@ function IndexTab({ kb }: { kb: KnowledgeBase }) {
   const [building, setBuilding] = useState(false);
   const [buildMsg, setBuildMsg] = useState("");
   const [buildProgress, setBuildProgress] = useState(0);
+  const [indexDeleteTarget, setIndexDeleteTarget] = useState<{ run: () => void } | null>(null);
 
   const fetchIndex = useCallback(async () => {
     setLoading(true);
@@ -1447,13 +1540,16 @@ function IndexTab({ kb }: { kb: KnowledgeBase }) {
   };
 
   const handleDrop = async () => {
-    if (!confirm("确定删除索引？删除后需重新构建。")) return;
-    try {
-      await kbApi.dropIndex(kb.id);
-      await fetchIndex();
-    } catch (e) {
-      alert(`删除失败: ${e}`);
-    }
+    setIndexDeleteTarget({
+      run: async () => {
+        try {
+          await kbApi.dropIndex(kb.id);
+          await fetchIndex();
+        } catch (e) {
+          alert(`删除失败: ${e}`);
+        }
+      },
+    });
   };
 
   if (loading) {
@@ -1555,6 +1651,14 @@ function IndexTab({ kb }: { kb: KnowledgeBase }) {
           </div>
         </div>
       </div>
+
+      {indexDeleteTarget && (
+        <ConfirmDialog
+          message="确定删除索引？删除后需重新构建。"
+          onCancel={() => setIndexDeleteTarget(null)}
+          onConfirm={() => { indexDeleteTarget.run(); setIndexDeleteTarget(null); }}
+        />
+      )}
     </div>
   );
 }
@@ -1568,6 +1672,7 @@ function DocumentsTab({ kb, onRefresh }: { kb: KnowledgeBase; onRefresh: () => v
   const [uploadTotal, setUploadTotal] = useState(0);
   const [errorNotices, setErrorNotices] = useState<{ doc_id: string; filename: string; error: string }[]>([]);
   const [progressMap, setProgressMap] = useState<Record<string, { stage: string; progress: number; detail: string }>>({});
+  const [docDeleteTarget, setDocDeleteTarget] = useState<{ message: string; run: () => void } | null>(null);
 
   const fetchDocs = useCallback(async () => {
     setLoading(true);
@@ -1613,6 +1718,37 @@ function DocumentsTab({ kb, onRefresh }: { kb: KnowledgeBase; onRefresh: () => v
         }
       );
     })();
+    return () => {
+      active = false;
+      if (unlisten) unlisten();
+    };
+  }, [kb.id, fetchDocs, onRefresh]);
+
+  // 桌面端文件拖放：tauri OS 级拖放只给路径（HTML5 drop 不触发），
+  // 故用 runtime.onFileDrop 拿路径 → 后端按路径读取并入库。浏览器端为 no-op（走 HTML5 onDrop）。
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let active = true;
+    onFileDrop(async (paths) => {
+      if (!active) return;
+      setUploadTotal(paths.length);
+      setUploadingCount(0);
+      for (const p of paths) {
+        try {
+          await kbApi.uploadDocumentFromPath(kb.id, p);
+        } catch (e) {
+          alert(`上传失败: ${e}`);
+        }
+        setUploadingCount((prev) => prev + 1);
+      }
+      setUploadTotal(0);
+      setUploadingCount(0);
+      await fetchDocs();
+      onRefresh();
+    }).then((un) => {
+      if (active) unlisten = un;
+      else un();
+    });
     return () => {
       active = false;
       if (unlisten) unlisten();
@@ -1679,14 +1815,18 @@ function DocumentsTab({ kb, onRefresh }: { kb: KnowledgeBase; onRefresh: () => v
   };
 
   const handleDelete = async (docId: string) => {
-    if (!confirm("删除此文档？")) return;
-    try {
-      await kbApi.deleteDocument(docId, kb.id);
-      await fetchDocs();
-      onRefresh();
-    } catch (e) {
-      alert(`删除失败: ${e}`);
-    }
+    setDocDeleteTarget({
+      message: "删除此文档？",
+      run: async () => {
+        try {
+          await kbApi.deleteDocument(docId, kb.id);
+          await fetchDocs();
+          onRefresh();
+        } catch (e) {
+          alert(`删除失败: ${e}`);
+        }
+      },
+    });
   };
 
   const handleReindex = async (docId: string) => {
@@ -1701,7 +1841,15 @@ function DocumentsTab({ kb, onRefresh }: { kb: KnowledgeBase; onRefresh: () => v
   return (
     <div className="space-y-4">
       {/* Upload zone */}
-      <label className="flex cursor-pointer items-center justify-center rounded-2xl border-2 border-dashed border-slate-300 bg-white px-6 py-8 transition-colors hover:border-blue-400 hover:bg-blue-50/30">
+      <label
+        className="flex cursor-pointer items-center justify-center rounded-2xl border-2 border-dashed border-slate-300 bg-white px-6 py-8 transition-colors hover:border-blue-400 hover:bg-blue-50/30"
+        onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }}
+        onDrop={(e) => {
+          e.preventDefault();
+          const files = Array.from(e.dataTransfer.files || []);
+          if (files.length > 0) handleUploadBatch(files);
+        }}
+      >
         <input
           type="file"
           className="hidden"
@@ -1722,7 +1870,7 @@ function DocumentsTab({ kb, onRefresh }: { kb: KnowledgeBase; onRefresh: () => v
         ) : (
           <div className="flex flex-col items-center gap-2 text-sm text-slate-500">
             <Upload className="h-6 w-6" />
-            <span>点击或拖拽上传文件到 RAG（支持多选）</span>
+            <span>点击上传文件到 RAG（支持多选）</span>
             <span className="text-xs text-slate-400">支持 md/txt/code/json/yaml/pdf</span>
           </div>
         )}
@@ -1856,6 +2004,14 @@ function DocumentsTab({ kb, onRefresh }: { kb: KnowledgeBase; onRefresh: () => v
             );
           })}
         </div>
+      )}
+
+      {docDeleteTarget && (
+        <ConfirmDialog
+          message={docDeleteTarget.message}
+          onCancel={() => setDocDeleteTarget(null)}
+          onConfirm={() => { docDeleteTarget.run(); setDocDeleteTarget(null); }}
+        />
       )}
     </div>
   );
@@ -2515,6 +2671,8 @@ function SettingsTab({ kb, onUpdated }: { kb: KnowledgeBase; onUpdated: (kb: Kno
   const [saved, setSaved] = useState(false);
   const [showChannelPicker, setShowChannelPicker] = useState(false);
   const [ocrModel, setOcrModel] = useState(kb.ocr_model || "");
+  const [reasoningEffort, setReasoningEffort] = useState(kb.reasoning_effort || "");
+  const [temperature, setTemperature] = useState(kb.temperature != null ? String(kb.temperature) : "");
   const { ocrEnabled, options: ocrModelOptionsRaw } = useOcrModelOptions();
   // OCR 只应选视觉模型：过滤掉疑似 embedding 的模型；
   // 当前已配置的模型即使被过滤也保留为可选值，避免误清空（可在下拉里改选正确的视觉模型）
@@ -2554,6 +2712,9 @@ function SettingsTab({ kb, onUpdated }: { kb: KnowledgeBase; onUpdated: (kb: Kno
         embedding_channel_id: embeddingChannelId || undefined,
         // ocr_model 总是提交：空字符串表示「不启用」（后端 null/缺省视为不修改，无法清空）
         ocr_model: ocrModel.trim(),
+        // 推理档位：空串=跟随默认；温度：空=不修改
+        reasoning_effort: reasoningEffort,
+        temperature: temperature.trim() === "" ? undefined : Number(temperature),
         status,
         mcp_enabled: mcpEnabled,
         chunk_size: chunkSize,
@@ -2737,6 +2898,43 @@ function SettingsTab({ kb, onUpdated }: { kb: KnowledgeBase; onUpdated: (kb: Kno
                 ? "用于识别扫描版 PDF，需有渠道声明支持该视觉模型（如 qwen-vl-max / glm-4v-flash）；留空则不启用"
                 : "请先在设置中心开启 LLM OCR"}
             </p>
+          </div>
+        </div>
+      </div>
+
+      {/* 推理档位 & 温度 */}
+      <div className="surface data-card rounded-2xl">
+        <h3 className="mb-4 text-sm font-semibold text-slate-900">推理与温度</h3>
+        <div className="space-y-4">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">推理档位（思考级别）</label>
+            <select
+              value={reasoningEffort}
+              onChange={(e) => setReasoningEffort(e.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+            >
+              <option value="">跟随默认（不覆盖模型默认）</option>
+              <option value="default">default（模型默认）</option>
+              <option value="none">none（关闭推理）</option>
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+            </select>
+            <p className="mt-1 text-xs text-slate-400">问答未显式传档位时使用该值；仅对支持 reasoning_effort 的上游有效。</p>
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">温度（0~2）</label>
+            <input
+              type="number"
+              min={0}
+              max={2}
+              step={0.1}
+              value={temperature}
+              onChange={(e) => setTemperature(e.target.value)}
+              placeholder="留空不修改"
+              className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+            />
+            <p className="mt-1 text-xs text-slate-400">问答未显式传温度时使用该值。</p>
           </div>
         </div>
       </div>
@@ -3258,8 +3456,26 @@ function stripFrontmatter(content: string): string {
 }
 
 // Reusable Markdown renderer for Wiki pages
+/// 把 markdown 中 root-relative 的 `/api/wiki/...` URL 补成绝对地址。
+/// 只匹配出现在括号/引号后（`(`、`"`、`'`）的路径，避免误伤已是 http://... 的链接。
+function absolutizeWikiApiUrls(md: string, baseUrl: string): string {
+  return md.replace(/([(("'])\/api\/wiki\//g, `$1${baseUrl}/api/wiki/`);
+}
+
 function WikiMarkdown({ content }: { content: string }) {
-  const body = stripFrontmatter(content);
+  // 桌面端（tauri WebView）无法解析 root-relative 的 /api/...（base 是 tauri://），
+  // 渲染前把图像/链接 URL 补成本机服务绝对地址 http://127.0.0.1:{port}/api/...
+  // Web 面板与 location.origin 同源，相对路径可直接解析，无需转换。
+  const [serverBase, setServerBase] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let active = true;
+    serverApi.getStatus().then((s) => {
+      if (active && s.port > 0) setServerBase(`http://127.0.0.1:${s.port}`);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
+  const body = stripFrontmatter(serverBase ? absolutizeWikiApiUrls(content, serverBase) : content);
   return (
     <div className="wiki-markdown">
       <ReactMarkdown
@@ -3341,6 +3557,7 @@ function WikiSection() {
   const [loading, setLoading] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [wikiDeleteTarget, setWikiDeleteTarget] = useState<{ message: string; run: () => void } | null>(null);
   const [wikiTab, setWikiTab] = useState<"overview" | "pages" | "sources" | "search" | "graph" | "settings">("overview");
   const selectedProject = useMemo(
     () => selectedProjectId ? projects.find((project) => project.id === selectedProjectId) ?? null : null,
@@ -3371,12 +3588,16 @@ function WikiSection() {
   }, []);
 
   const handleDelete = async (id: string) => {
-    if (!confirm("确定删除此 Wiki 项目？所有页面和源数据将一并删除。")) return;
-    try {
-      await wikiApi.deleteProject(id);
-      await fetchProjects();
-      if (selectedProjectId === id) setSelectedProjectId(null);
-    } catch (e) { setError(String(e)); }
+    setWikiDeleteTarget({
+      message: "确定删除此 Wiki 项目？所有页面和源数据将一并删除。",
+      run: async () => {
+        try {
+          await wikiApi.deleteProject(id);
+          await fetchProjects();
+          if (selectedProjectId === id) setSelectedProjectId(null);
+        } catch (e) { setError(String(e)); }
+      },
+    });
   };
 
   const handleToggleStatus = async (p: WikiProject, newStatus: number) => {
@@ -3511,6 +3732,14 @@ function WikiSection() {
           onCreated={async () => { setShowCreate(false); await fetchProjects(); }}
         />
       )}
+
+      {wikiDeleteTarget && (
+        <ConfirmDialog
+          message={wikiDeleteTarget.message}
+          onCancel={() => setWikiDeleteTarget(null)}
+          onConfirm={() => { wikiDeleteTarget.run(); setWikiDeleteTarget(null); }}
+        />
+      )}
     </>
   );
 }
@@ -3526,6 +3755,10 @@ function CreateWikiProjectModal({ onClose, onCreated }: { onClose: () => void; o
   const [selectedModel, setSelectedModel] = useState("");
   const [chatChannel, setChatChannel] = useState("");
   const [chatModel, setChatModel] = useState("");
+  const [pdfOcrChannel, setPdfOcrChannel] = useState("");
+  const [pdfOcrModel, setPdfOcrModel] = useState("");
+  // 推理档位（思考级别）：新建时即可配置（摄入/问答 LLM 调用联动 thinking）
+  const [reasoningEffort, setReasoningEffort] = useState("");
 
   useEffect(() => {
     channelApi.getAll().then(list => {
@@ -3554,6 +3787,9 @@ function CreateWikiProjectModal({ onClose, onCreated }: { onClose: () => void; o
         ingest_model: selectedModel,
         chat_channel_id: chatChannel || selectedChannel,
         chat_model: chatModel || selectedModel,
+        pdf_ocr_channel_id: pdfOcrChannel || undefined,
+        pdf_ocr_model: pdfOcrModel || undefined,
+        reasoning_effort: reasoningEffort || undefined,
       });
       onCreated();
     } catch (e) {
@@ -3565,7 +3801,7 @@ function CreateWikiProjectModal({ onClose, onCreated }: { onClose: () => void; o
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div className="relative w-full max-w-lg rounded-3xl bg-white p-7 shadow-2xl" onClick={e => e.stopPropagation()}>
+      <div className="relative w-full max-w-lg rounded-3xl bg-white p-7 shadow-2xl max-h-[60vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <button onClick={onClose} className="absolute right-5 top-5 rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
           <XCircle className="h-5 w-5" />
         </button>
@@ -3621,6 +3857,33 @@ function CreateWikiProjectModal({ onClose, onCreated }: { onClose: () => void; o
               autoLabel="同摄入渠道"
             />
           </div>
+          <div className="rounded-2xl border border-slate-100 p-4">
+            <label className="mb-1.5 block text-xs font-medium text-slate-700">PDF 视觉模型</label>
+            <p className="mb-2 text-[11px] text-slate-400">摄入含扫描页/图文页的 PDF 时识别整页文字，纯文字层 PDF 不需要。可留空稍后在项目设置中配置。</p>
+            <ChannelModelPicker
+              channels={channels}
+              channelId={pdfOcrChannel}
+              onChannelChange={setPdfOcrChannel}
+              model={pdfOcrModel}
+              onModelChange={setPdfOcrModel}
+            />
+          </div>
+          <div className="rounded-2xl border border-slate-100 p-4">
+            <label className="mb-1.5 block text-xs font-medium text-slate-700">推理档位（思考级别）</label>
+            <p className="mb-2 text-[11px] text-slate-400">摄入与问答使用的 LLM 推理档位，选择后自动联动 thinking 参数。未配置或选 default 时跟随模型默认。</p>
+            <select
+              value={reasoningEffort}
+              onChange={e => setReasoningEffort(e.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm"
+            >
+              <option value="">跟随模型默认（不写档位/thinking）</option>
+              <option value="default">default（模型默认）</option>
+              <option value="none">none（关闭推理）</option>
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+            </select>
+          </div>
           <div>
             <label className="mb-1.5 block text-xs font-medium text-slate-700">Wiki Schema (CLAUDE.md)</label>
             <p className="mb-1.5 text-[11px] text-slate-400">定义 LLM 维护 Wiki 的规则。留空使用默认模板。</p>
@@ -3662,6 +3925,60 @@ function WikiProjectDetail({
   onUpdated: (project: WikiProject) => void;
 }) {
   const [initialSearchQuery, setInitialSearchQuery] = useState<string | null>(null);
+
+  // 实时测量次级菜单行（Breadcrumb + Tabs）高度 → CSS 变量 --wali-tabs-h。
+  // Wiki 页面详情里的"返回列表/编辑/删除"操作行 sticky top 用它做阈值（header + tabs 高度），
+  // 保证操作行钉在 Tabs 正下方而不重叠（Tabs 高度随窗口宽度/换行变化）。
+  const tabsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = tabsRef.current;
+    if (!el) return;
+    const apply = () => {
+      document.documentElement.style.setProperty("--wali-tabs-h", `${el.offsetHeight}px`);
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // 摄入进度使用模块级状态：切换一级侧边栏（服务页整体卸载）不丢失，
+  // 回到「源」tab 时未完成任务进度条立即恢复显示；完成/失败/取消后删除条目并 bump 版本刷新列表。
+  const wikiProgress = useModuleWikiProgress();
+  const [wikiSourcesVersion, setWikiSourcesVersion] = useState(0);
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let active = true;
+    (async () => {
+      const { listen } = await import("@tauri-apps/api/event");
+      unlisten = await listen<{ source_id: string; project_id: string; filename: string; stage: string; progress: number; detail: string }>(
+        "wiki-source-progress",
+        (event) => {
+          if (!active) return;
+          const p = event.payload;
+          if (p.project_id !== project.id) return;
+          if (p.stage === "done" || p.stage === "error" || p.stage === "cancelled") {
+            patchWikiProgress((prev) => {
+              const next = { ...prev };
+              delete next[p.source_id];
+              return next;
+            });
+            setWikiSourcesVersion((v) => v + 1);
+            if (p.stage === "done") onRefresh();
+          } else {
+            patchWikiProgress((prev) => ({
+              ...prev,
+              [p.source_id]: { stage: p.stage, progress: p.progress, detail: p.detail, filename: p.filename || prev[p.source_id]?.filename || "" },
+            }));
+          }
+        }
+      );
+    })();
+    return () => {
+      active = false;
+      if (unlisten) unlisten();
+    };
+  }, [project.id, onRefresh]);
   const tabs = [
     { key: "overview" as const, label: "概览", icon: Layers },
     { key: "pages" as const, label: "页面", icon: FileText },
@@ -3673,8 +3990,8 @@ function WikiProjectDetail({
 
   return (
     <div className="space-y-4">
-      {/* Breadcrumb + Tabs */}
-      <div className="flex items-center justify-between">
+      {/* Breadcrumb + Tabs：滚动时钉在 page-header（sticky top-0，约 88px 高）下方 */}
+      <div ref={tabsRef} className="sticky top-[var(--wali-page-header-h,88px)] z-20 -mx-1 flex items-center justify-between rounded-2xl border border-slate-100 bg-white/95 px-4 py-2.5 backdrop-blur">
         <div className="flex items-center gap-2">
           <button onClick={onBack} className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-900">
             <ChevronRight className="h-3 w-3 rotate-180" /> 返回
@@ -3702,7 +4019,7 @@ function WikiProjectDetail({
       {/* Tab Content */}
       {tab === "overview" && <WikiOverview project={project} onTagClick={(tag) => { setInitialSearchQuery(tag); setTab("search"); }} />}
       {tab === "pages" && <WikiPagesTab project={project} />}
-      {tab === "sources" && <WikiSourcesTab project={project} onRefresh={onRefresh} onNavigateSettings={() => setTab("settings")} />}
+      {tab === "sources" && <WikiSourcesTab project={project} onRefresh={onRefresh} onNavigateSettings={() => setTab("settings")} progressMap={wikiProgress} sourcesVersion={wikiSourcesVersion} />}
       {tab === "search" && <WikiSearchTab project={project} initialQuery={initialSearchQuery} onInitialQueryConsumed={() => setInitialSearchQuery(null)} />}
       {tab === "graph" && <WikiGraphTab project={project} />}
       {tab === "settings" && <WikiSettingsTab project={project} onUpdated={onUpdated} />}
@@ -3855,6 +4172,7 @@ function WikiPagesTab({ project }: { project: WikiProject }) {
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState("");
   const [saving, setSaving] = useState(false);
+  const [pageDeleteTarget, setPageDeleteTarget] = useState<string | null>(null);
 
   const fetchPages = useCallback(async () => {
     setLoading(true);
@@ -3871,6 +4189,15 @@ function WikiPagesTab({ project }: { project: WikiProject }) {
       const page = await wikiApi.getPage(project.id, path);
       setPageContent(page.content || "");
     } catch { setPageContent("无法加载页面内容"); }
+  };
+
+  const doDeletePage = async (path: string) => {
+    try {
+      await wikiApi.deletePage(project.id, path);
+      setSelectedPage(null);
+      setEditing(false);
+      await fetchPages();
+    } catch { /* ignore */ }
   };
 
   const handleSave = async () => {
@@ -3900,16 +4227,22 @@ function WikiPagesTab({ project }: { project: WikiProject }) {
 
   if (selectedPage) {
     return (
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <button onClick={() => setSelectedPage(null)} className="text-xs text-slate-500 hover:text-slate-900">
+      <>
+        <div className="space-y-3">
+        {/* 次级菜单（返回列表/编辑/删除）：滚动时钉在 Tabs（设置按钮所在菜单）正下方。
+            阈值 = page-header 高度 + Tabs 行高度（两变量均由 ResizeObserver 实时测量）。 */}
+        <div className="sticky top-[calc(var(--wali-page-header-h,88px)+var(--wali-tabs-h,40px))] z-20 -mx-1 flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white/95 px-4 py-2.5 backdrop-blur">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <button
+              onClick={() => setSelectedPage(null)}
+              className="inline-flex shrink-0 items-center gap-1 text-xs text-slate-500 hover:text-slate-900"
+            >
               <ChevronRight className="h-3 w-3 rotate-180" /> 返回列表
             </button>
-            <span className="text-slate-300">/</span>
-            <code className="text-xs text-slate-700">{selectedPage}</code>
+            <span className="shrink-0 text-slate-300">/</span>
+            <code className="min-w-0 truncate text-xs text-slate-700" title={selectedPage}>{selectedPage}</code>
           </div>
-          <div className="flex gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             {editing ? (
               <>
                 <button onClick={() => setEditing(false)} className="action-secondary">取消</button>
@@ -3919,9 +4252,14 @@ function WikiPagesTab({ project }: { project: WikiProject }) {
                 </button>
               </>
             ) : (
-              <button onClick={() => { setEditContent(pageContent); setEditing(true); }} className="action-secondary">
-                <Edit3 size={14} /> 编辑
-              </button>
+              <>
+                <button onClick={() => { setEditContent(pageContent); setEditing(true); }} className="action-secondary inline-flex items-center gap-1">
+                  <Edit3 size={14} /> 编辑
+                </button>
+                <button onClick={() => setPageDeleteTarget(selectedPage)} className="inline-flex items-center gap-1 whitespace-nowrap rounded-xl border border-red-200 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50">
+                  <Trash2 size={14} /> 删除
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -3937,6 +4275,15 @@ function WikiPagesTab({ project }: { project: WikiProject }) {
           </div>
         )}
       </div>
+
+      {pageDeleteTarget && (
+        <ConfirmDialog
+          message={`确定删除页面 "${pageDeleteTarget}"？此操作不可恢复。`}
+          onCancel={() => setPageDeleteTarget(null)}
+          onConfirm={() => { const p = pageDeleteTarget; setPageDeleteTarget(null); doDeletePage(p); }}
+        />
+      )}
+      </>
     );
   }
 
@@ -3967,14 +4314,14 @@ function WikiPagesTab({ project }: { project: WikiProject }) {
   );
 }
 
-function WikiSourcesTab({ project, onRefresh, onNavigateSettings }: { project: WikiProject; onRefresh: () => void; onNavigateSettings: () => void }) {
+function WikiSourcesTab({ project, onRefresh, onNavigateSettings, progressMap, sourcesVersion }: { project: WikiProject; onRefresh: () => void; onNavigateSettings: () => void; progressMap: Record<string, { stage: string; progress: number; detail: string; filename: string }>; sourcesVersion: number }) {
   const [sources, setSources] = useState<WikiSource[]>([]);
   const [loading, setLoading] = useState(true);
   const [ingesting, setIngesting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [uploadTotal, setUploadTotal] = useState(0);
   const [uploadingCount, setUploadingCount] = useState(0);
-  const [progressMap, setProgressMap] = useState<Record<string, { stage: string; progress: number; detail: string; filename: string }>>({});
+  const [sourceFileDeleteTarget, setSourceFileDeleteTarget] = useState<{ message: string; run: () => void } | null>(null);
 
   const fetchSources = useCallback(async () => {
     setLoading(true);
@@ -3982,47 +4329,39 @@ function WikiSourcesTab({ project, onRefresh, onNavigateSettings }: { project: W
     catch { /* ignore */ } finally { setLoading(false); }
   }, [project.id]);
 
-  useEffect(() => { fetchSources(); }, [fetchSources]);
+  // 首次加载 + 父组件进度监听在任务完成/失败/取消时 bump sourcesVersion → 刷新列表
+  useEffect(() => { fetchSources(); }, [fetchSources, sourcesVersion]);
 
-  // Listen for wiki source ingest progress events
+  // 桌面端文件拖放：tauri OS 级拖放只给路径（HTML5 drop 被接管不触发），
+  // 故用 runtime.onFileDrop 拿路径 → 后端按路径读文件落盘 → 自动摄入。浏览器端为 no-op。
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let active = true;
-    (async () => {
-      const { listen } = await import("@tauri-apps/api/event");
-      unlisten = await listen<{ source_id: string; project_id: string; filename: string; stage: string; progress: number; detail: string }>(
-        "wiki-source-progress",
-        (event) => {
-          if (!active) return;
-          const p = event.payload;
-          if (p.project_id !== project.id) return;
-          if (p.stage === "done") {
-            setProgressMap((prev) => {
-              const next = { ...prev };
-              delete next[p.source_id];
-              return next;
-            });
+    onFileDrop(async (paths) => {
+      if (!active) return;
+      setUploadTotal(paths.length);
+      setUploadingCount(0);
+      for (const p of paths) {
+        try {
+          const source = await wikiApi.addSourceFromPath(project.id, p);
+          setUploadingCount((prev) => prev + 1);
+          setIngesting(source.id);
+          wikiApi.ingestSource(project.id, source.id).catch((e) => {
+            setError(`摄入失败: ${e}`);
             setIngesting(null);
-            fetchSources();
-            onRefresh();
-          } else if (p.stage === "error") {
-            setProgressMap((prev) => {
-              const next = { ...prev };
-              delete next[p.source_id];
-              return next;
-            });
-            setIngesting(null);
-            setError(p.detail);
-            fetchSources();
-          } else {
-            setProgressMap((prev) => ({
-              ...prev,
-              [p.source_id]: { stage: p.stage, progress: p.progress, detail: p.detail, filename: p.filename || prev[p.source_id]?.filename || "" },
-            }));
-          }
+          });
+        } catch (e) {
+          setError(`上传失败: ${e}`);
         }
-      );
-    })();
+      }
+      setUploadTotal(0);
+      setUploadingCount(0);
+      await fetchSources();
+      onRefresh();
+    }).then((un) => {
+      if (active) unlisten = un;
+      else un();
+    });
     return () => {
       active = false;
       if (unlisten) unlisten();
@@ -4030,10 +4369,25 @@ function WikiSourcesTab({ project, onRefresh, onNavigateSettings }: { project: W
   }, [project.id, fetchSources, onRefresh]);
 
   const handleDelete = async (id: string) => {
-    if (!confirm("确定删除此源文件？")) return;
-    await wikiApi.deleteSource(id);
-    await fetchSources();
-    onRefresh();
+    setSourceFileDeleteTarget({
+      message: "确定删除此源文件？",
+      run: async () => {
+        await wikiApi.deleteSource(id);
+        await fetchSources();
+        onRefresh();
+      },
+    });
+  };
+
+  // 停止处理：取消进行中的摄入（OCR/LLM 检查点尽快退出，不再继续后续步骤）
+  const handleCancelIngest = async (id: string) => {
+    try {
+      await wikiApi.cancelIngest(project.id, id);
+      setIngesting(null);
+      await fetchSources();
+    } catch (e) {
+      setError(`停止失败: ${e}`);
+    }
   };
 
   const handleUploadBatch = async (files: File[]) => {
@@ -4042,9 +4396,12 @@ function WikiSourcesTab({ project, onRefresh, onNavigateSettings }: { project: W
     setUploadingCount(0);
     for (const file of files) {
       try {
-        const content = await file.text();
+        // PDF 是二进制：base64 传输，后端解码为原始字节再落盘（否则 UTF-8 解码会变乱码）；
+        // 其余纯文本照旧按文本读取。
+        const ext = (file.name.split('.').pop() || 'txt').toLowerCase();
+        const content = ext === 'pdf' ? await fileToBase64(file) : await file.text();
         const source = await wikiApi.addSource(project.id, {
-          source_type: file.name.split('.').pop() || 'txt',
+          source_type: ext,
           filename: file.name,
           content,
         });
@@ -4101,6 +4458,7 @@ function WikiSourcesTab({ project, onRefresh, onNavigateSettings }: { project: W
     pending: "bg-amber-50 text-amber-600",
     ingested: "bg-emerald-50 text-emerald-600",
     failed: "bg-red-50 text-red-500",
+    cancelled: "bg-slate-100 text-slate-500",
   };
 
   // Collect active progress entries (not done, not error)
@@ -4109,7 +4467,15 @@ function WikiSourcesTab({ project, onRefresh, onNavigateSettings }: { project: W
   return (
     <div className="space-y-4">
       {/* Upload zone — matches RAG style */}
-      <label className="flex cursor-pointer items-center justify-center rounded-2xl border-2 border-dashed border-slate-300 bg-white px-6 py-8 transition-colors hover:border-violet-400 hover:bg-violet-50/30">
+      <label
+        className="flex cursor-pointer items-center justify-center rounded-2xl border-2 border-dashed border-slate-300 bg-white px-6 py-8 transition-colors hover:border-violet-400 hover:bg-violet-50/30"
+        onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }}
+        onDrop={(e) => {
+          e.preventDefault();
+          const files = Array.from(e.dataTransfer.files || []);
+          if (files.length > 0) handleUploadBatch(files);
+        }}
+      >
         <input
           type="file"
           className="hidden"
@@ -4130,7 +4496,7 @@ function WikiSourcesTab({ project, onRefresh, onNavigateSettings }: { project: W
         ) : (
           <div className="flex flex-col items-center gap-2 text-sm text-slate-500">
             <Upload className="h-6 w-6" />
-            <span>点击或拖拽上传文件（支持多选）</span>
+            <span>点击上传文件（支持多选）</span>
             <span className="text-xs text-slate-400">支持 md/txt/code/json/yaml/pdf，上传后自动摄入</span>
           </div>
         )}
@@ -4227,8 +4593,13 @@ function WikiSourcesTab({ project, onRefresh, onNavigateSettings }: { project: W
                   </div>
                 </div>
                 <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${statusColors[s.status] || "bg-slate-50 text-slate-500"}`}>{s.status}</span>
-                {(s.status === 'pending' || s.status === 'failed') && (
-                  <button onClick={() => handleIngest(s.id)} disabled={!!ingesting} className="rounded-lg p-1.5 text-violet-500 hover:bg-violet-50 disabled:opacity-50" title={s.status === 'failed' ? '重新摄入' : '摄入'}>
+                {(ingesting === s.id || s.status === 'pending') && (
+                  <button onClick={() => handleCancelIngest(s.id)} className="rounded-lg p-1.5 text-red-500 hover:bg-red-50" title="停止处理">
+                    <XCircle className="h-3.5 w-3.5" />
+                  </button>
+                )}
+                {(s.status === 'pending' || s.status === 'failed' || s.status === 'cancelled') && (
+                  <button onClick={() => handleIngest(s.id)} disabled={!!ingesting} className="rounded-lg p-1.5 text-violet-500 hover:bg-violet-50 disabled:opacity-50" title={s.status === 'failed' || s.status === 'cancelled' ? '重新摄入' : '摄入'}>
                     {ingesting === s.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
                   </button>
                 )}
@@ -4239,6 +4610,14 @@ function WikiSourcesTab({ project, onRefresh, onNavigateSettings }: { project: W
             ))}
           </div>
         </div>
+      )}
+
+      {sourceFileDeleteTarget && (
+        <ConfirmDialog
+          message={sourceFileDeleteTarget.message}
+          onCancel={() => setSourceFileDeleteTarget(null)}
+          onConfirm={() => { sourceFileDeleteTarget.run(); setSourceFileDeleteTarget(null); }}
+        />
       )}
     </div>
   );
@@ -4783,6 +5162,7 @@ function ChannelModelPicker({
   onModelChange,
   allowAuto = false,
   autoLabel = "同摄入渠道",
+  stacked = false,
 }: {
   channels: Channel[];
   channelId: string;
@@ -4791,6 +5171,7 @@ function ChannelModelPicker({
   onModelChange: (m: string) => void;
   allowAuto?: boolean;
   autoLabel?: string;
+  stacked?: boolean;
 }) {
   const [showChannelPicker, setShowChannelPicker] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
@@ -4805,8 +5186,7 @@ function ChannelModelPicker({
   };
 
   return (
-    <div className="flex gap-2">
-      {/* Channel picker */}
+    <div className={stacked ? "flex flex-col gap-2" : "flex gap-2"}>{/* Channel picker */}
       <div className="relative flex-1">
         <button
           type="button"
@@ -4908,7 +5288,12 @@ function WikiSettingsTab({ project, onUpdated }: { project: WikiProject; onUpdat
   const [chatModel, setChatModel] = useState(project.chat_model || "");
   const [ingestChannelId, setIngestChannelId] = useState(project.ingest_channel_id || "");
   const [chatChannelId, setChatChannelId] = useState(project.chat_channel_id || "");
+  const [pdfOcrChannelId, setPdfOcrChannelId] = useState(project.pdf_ocr_channel_id || "");
+  const [pdfOcrModel, setPdfOcrModel] = useState(project.pdf_ocr_model || "");
+  const [reasoningEffort, setReasoningEffort] = useState(project.reasoning_effort || "");
+  const [temperature, setTemperature] = useState(project.temperature != null ? String(project.temperature) : "");
   const [schemaText, setSchemaText] = useState(project.schema_text || "");
+  const [mcpEnabled, setMcpEnabled] = useState(project.mcp_enabled ?? 1);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -4925,6 +5310,13 @@ function WikiSettingsTab({ project, onUpdated }: { project: WikiProject; onUpdat
         chat_model: chatModel || undefined, schema_text: schemaText || undefined,
         ingest_channel_id: ingestChannelId || undefined,
         chat_channel_id: chatChannelId || undefined,
+        // 空串=显式「不启用」（后端以 Some("") 覆盖旧值；摄入时按未配置处理）
+        pdf_ocr_channel_id: pdfOcrChannelId,
+        pdf_ocr_model: pdfOcrModel,
+        // 推理档位：空串=跟随默认（摄入未配置时默认 high）；温度：空=不修改
+        reasoning_effort: reasoningEffort,
+        temperature: temperature.trim() === "" ? undefined : Number(temperature),
+        mcp_enabled: mcpEnabled,
       });
       onUpdated(updated);
       setSaved(true);
@@ -4941,39 +5333,110 @@ function WikiSettingsTab({ project, onUpdated }: { project: WikiProject; onUpdat
           {saved ? "已保存" : "保存"}
         </button>
       </div>
-      <div>
-        <label className="mb-1.5 block text-xs font-medium text-slate-700">项目名称</label>
-        <input value={name} onChange={e => setName(e.target.value)} className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm" />
-      </div>
-      <div>
-        <label className="mb-1.5 block text-xs font-medium text-slate-700">描述</label>
-        <input value={description} onChange={e => setDescription(e.target.value)} className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm" />
-      </div>
-      <div className="rounded-2xl border border-slate-100 p-4">
-        <label className="mb-1.5 block text-xs font-medium text-slate-700">摄入渠道 & 模型</label>
-        <p className="mb-2 text-[11px] text-slate-400">用于 LLM 解析文档并生成 Wiki 页面</p>
-        <ChannelModelPicker
-          channels={channels}
-          channelId={ingestChannelId}
-          onChannelChange={setIngestChannelId}
-          model={ingestModel}
-          onModelChange={setIngestModel}
-          allowAuto
-          autoLabel="自动选择"
-        />
-      </div>
-      <div className="rounded-2xl border border-slate-100 p-4">
-        <label className="mb-1.5 block text-xs font-medium text-slate-700">对话渠道 & 模型</label>
-        <p className="mb-2 text-[11px] text-slate-400">用于 Wiki 问答</p>
-        <ChannelModelPicker
-          channels={channels}
-          channelId={chatChannelId}
-          onChannelChange={setChatChannelId}
-          model={chatModel}
-          onModelChange={setChatModel}
-          allowAuto
-          autoLabel="同摄入渠道"
-        />
+      {/* 两列六项布局：行1 基础信息+摄入；行2 对话+PDF 视觉；行3 推理档位+MCP。
+          Wiki Schema 在 grid 外独占整行宽度（位置保持在最底部）。 */}
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+        <div className="rounded-2xl border border-slate-100 p-4 space-y-3">
+          <h4 className="text-xs font-semibold text-slate-900">项目基础信息</h4>
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-slate-700">项目名称</label>
+            <input value={name} onChange={e => setName(e.target.value)} className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm" />
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-slate-700">描述</label>
+            <input value={description} onChange={e => setDescription(e.target.value)} className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm" />
+          </div>
+        </div>
+        <div className="rounded-2xl border border-slate-100 p-4">
+          <label className="mb-1.5 block text-xs font-medium text-slate-700">摄入渠道 & 模型</label>
+          <p className="mb-2 text-[11px] text-slate-400">用于 LLM 解析文档并生成 Wiki 页面</p>
+          <ChannelModelPicker
+            channels={channels}
+            channelId={ingestChannelId}
+            onChannelChange={setIngestChannelId}
+            model={ingestModel}
+            onModelChange={setIngestModel}
+            allowAuto
+            autoLabel="自动选择"
+            stacked
+          />
+        </div>
+        <div className="rounded-2xl border border-slate-100 p-4">
+          <label className="mb-1.5 block text-xs font-medium text-slate-700">对话渠道 & 模型</label>
+          <p className="mb-2 text-[11px] text-slate-400">用于 Wiki 问答</p>
+          <ChannelModelPicker
+            channels={channels}
+            channelId={chatChannelId}
+            onChannelChange={setChatChannelId}
+            model={chatModel}
+            onModelChange={setChatModel}
+            allowAuto
+            autoLabel="同摄入渠道"
+            stacked
+          />
+        </div>
+        <div className="rounded-2xl border border-slate-100 p-4">
+          <div className="mb-1.5 flex items-center justify-between">
+            <label className="text-xs font-medium text-slate-700">PDF 视觉模型</label>
+            {(pdfOcrChannelId || pdfOcrModel) && (
+              <button
+                type="button"
+                onClick={() => { setPdfOcrChannelId(""); setPdfOcrModel(""); }}
+                className="text-[11px] text-slate-400 hover:text-slate-600"
+              >
+                不启用
+              </button>
+            )}
+          </div>
+          <p className="mb-2 text-[11px] text-slate-400">摄入含扫描页/图文页的 PDF 时用该模型识别整页文字（复用渠道视觉模型）；纯文字层 PDF 不需要配置。未配置时扫描版 PDF 摄入会报错提示。</p>
+          <ChannelModelPicker
+            channels={channels}
+            channelId={pdfOcrChannelId}
+            onChannelChange={setPdfOcrChannelId}
+            model={pdfOcrModel}
+            onModelChange={setPdfOcrModel}
+            stacked
+          />
+        </div>
+        <div className="rounded-2xl border border-slate-100 p-4 space-y-3">
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-slate-700">推理档位（思考级别）</label>
+            <p className="mb-2 text-[11px] text-slate-400">摄入与问答使用的 LLM 推理档位。未配置或选 default 时不写档位字段与 thinking，完全跟随模型默认（对严格校验的上游最安全）；显式选择档位时自动联动 thinking。</p>
+            <select
+              value={reasoningEffort}
+              onChange={e => setReasoningEffort(e.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm"
+            >
+              <option value="">跟随模型默认（不写档位/thinking）</option>
+              <option value="default">default（模型默认）</option>
+              <option value="none">none（关闭推理）</option>
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+            </select>
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-slate-700">温度（0~2）</label>
+            <p className="mb-2 text-[11px] text-slate-400">留空不修改；摄入默认 0.3，问答默认 0.4。</p>
+            <input
+              type="number"
+              min={0}
+              max={2}
+              step={0.1}
+              value={temperature}
+              onChange={e => setTemperature(e.target.value)}
+              placeholder="留空"
+              className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm"
+            />
+          </div>
+        </div>
+        <div className="rounded-2xl border border-slate-100 p-4">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={mcpEnabled === 1} onChange={(e) => setMcpEnabled(e.target.checked ? 1 : 0)} className="rounded" />
+            <span className="text-sm text-slate-700">MCP 暴露</span>
+          </label>
+          <p className="mt-1.5 text-[11px] text-slate-400">关闭后该 Wiki 项目不出现在 MCP 工具列表中。仍需在密钥页为 Key 授权该项目，Key 才有查询权限。</p>
+        </div>
       </div>
       <div>
         <label className="mb-1.5 block text-xs font-medium text-slate-700">Wiki Schema (CLAUDE.md)</label>

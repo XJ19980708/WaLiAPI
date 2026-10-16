@@ -97,6 +97,23 @@ pub async fn get_wiki_pages(
 }
 
 #[tauri::command]
+pub async fn delete_wiki_page(
+    state: State<'_, Arc<AppState>>,
+    project_id: String,
+    path: String,
+) -> Result<(), String> {
+    let pool = state.db.pool.clone();
+    let repo = crate::services::wiki::repository::WikiRepository::new(pool);
+    repo.delete_page(&project_id, &path).await?;
+    // 同时删除磁盘上的页面文件（保留目录结构）
+    let dir = crate::services::wiki::project::project_wiki_dir(&project_id);
+    if let Ok(rel) = crate::services::wiki::project::safe_relative_path(&path) {
+        let _ = tokio::fs::remove_file(dir.join(rel)).await;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn get_wiki_page(
     state: State<'_, Arc<AppState>>,
     project_id: String,
@@ -217,23 +234,71 @@ pub async fn add_wiki_source(
     let pool = state.db.pool.clone();
     let repo = crate::services::wiki::repository::WikiRepository::new(pool);
 
-    let content_hash = input.content.as_ref().map(|c| {
+    let content_bytes = input.content.as_deref().map(|c| {
+        crate::services::wiki::project::resolve_source_content(&input.filename, c)
+    });
+
+    let content_hash = content_bytes.as_ref().map(|b| {
         let mut hasher = Sha256::new();
-        hasher.update(c.as_bytes());
+        hasher.update(b);
         format!("{:x}", hasher.finalize())
     });
-    let file_size = input.content.as_ref().map(|c| c.len() as i64).unwrap_or(0);
+    let file_size = content_bytes.as_ref().map(|b| b.len() as i64).unwrap_or(0);
 
-    if let Some(ref content) = input.content {
+    if let Some(ref content) = content_bytes {
         crate::services::wiki::project::write_source_file(
             &project_id,
             &input.filename,
-            content.as_bytes(),
+            content,
         )
         .await?;
     }
 
     repo.add_source(&project_id, &input, content_hash.as_deref(), file_size)
+        .await
+}
+
+/// 从本地文件路径导入 Wiki 源资料（桌面端拖放上传用：tauri 拖放事件只给路径，不给文件内容）。
+/// 后端直接读原始字节落盘 —— 文本与 PDF 统一按字节存，摄入时按类型读取，避免前端 base64 往返。
+#[tauri::command]
+pub async fn add_wiki_source_from_path(
+    state: State<'_, Arc<AppState>>,
+    project_id: String,
+    path: String,
+) -> Result<WikiSource, String> {
+    let pool = state.db.pool.clone();
+    let repo = crate::services::wiki::repository::WikiRepository::new(pool);
+
+    let filename = std::path::Path::new(&path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "无效的文件路径".to_string())?
+        .to_string();
+    let ext = filename
+        .rsplit('.')
+        .next()
+        .unwrap_or("txt")
+        .to_lowercase();
+
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| format!("读取文件失败: {}", e))?;
+
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    let hash = format!("{:x}", hasher.finalize());
+    let file_size = bytes.len() as i64;
+
+    crate::services::wiki::project::write_source_file(&project_id, &filename, &bytes).await?;
+
+    let input = AddSourceInput {
+        source_type: ext,
+        filename,
+        file_path: None,
+        source_url: None,
+        content: None,
+    };
+    repo.add_source(&project_id, &input, Some(&hash), file_size)
         .await
 }
 
@@ -329,18 +394,26 @@ pub async fn ingest_wiki_source(
         let pid = project_id.clone();
         let err = e.clone();
         let events = state.events.clone();
+        let cancelled = err.starts_with("CANCELLED");
         tokio::spawn(async move {
             let repo = crate::services::wiki::repository::WikiRepository::new(pool_clone);
-            let _ = repo
-                .update_source_status(&sid, "failed", 0, Some(&err))
-                .await;
+            if cancelled {
+                // 用户主动停止：来源落 cancelled（而非 failed），便于区分
+                let _ = repo
+                    .update_source_status(&sid, "cancelled", 0, None)
+                    .await;
+            } else {
+                let _ = repo
+                    .update_source_status(&sid, "failed", 0, Some(&err))
+                    .await;
+            }
             events.emit(
                 "wiki-source-progress",
                 serde_json::json!({
                     "source_id": sid,
                     "project_id": pid,
                     "filename": "",
-                    "stage": "error",
+                    "stage": if cancelled { "cancelled" } else { "error" },
                     "progress": 0,
                     "detail": &err,
                 }),
@@ -348,6 +421,35 @@ pub async fn ingest_wiki_source(
         });
         e
     })
+}
+
+/// 取消指定来源的摄入任务（停止按钮）。
+/// 将 queue 中 running/pending 的任务置 cancelled；摄入循环检查到后尽快终止，
+/// 不再继续 OCR 与 LLM 生成。来源状态同时落 cancelled。
+#[tauri::command]
+pub async fn cancel_wiki_ingest(
+    state: State<'_, Arc<AppState>>,
+    project_id: String,
+    source_id: String,
+) -> Result<serde_json::Value, String> {
+    let pool = state.db.pool.clone();
+    let repo = crate::services::wiki::repository::WikiRepository::new(pool);
+    repo.cancel_source_ingest(&source_id).await?;
+    let _ = repo
+        .update_source_status(&source_id, "cancelled", 0, None)
+        .await;
+    let _ = state.events.emit(
+        "wiki-source-progress",
+        serde_json::json!({
+            "source_id": source_id,
+            "project_id": project_id,
+            "filename": "",
+            "stage": "cancelled",
+            "progress": 0,
+            "detail": "已停止处理",
+        }),
+    );
+    Ok(serde_json::json!({ "status": "cancelled" }))
 }
 
 #[tauri::command]

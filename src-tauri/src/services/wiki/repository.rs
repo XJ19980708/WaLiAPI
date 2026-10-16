@@ -59,8 +59,8 @@ impl WikiRepository {
             .unwrap_or_else(|| DEFAULT_SCHEMA.to_string());
 
         sqlx::query(
-            "INSERT INTO wiki_projects (id, name, description, status, schema_text, wiki_dir, ingest_model, chat_model, ingest_channel_id, chat_channel_id, mcp_enabled, source_count, page_count, created_at, updated_at)
-             VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, 1, 0, 0, ?, ?)"
+            "INSERT INTO wiki_projects (id, name, description, status, schema_text, wiki_dir, ingest_model, chat_model, ingest_channel_id, chat_channel_id, pdf_ocr_channel_id, pdf_ocr_model, reasoning_effort, temperature, mcp_enabled, source_count, page_count, created_at, updated_at)
+             VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, ?, ?)"
         )
         .bind(&id)
         .bind(&input.name)
@@ -71,8 +71,22 @@ impl WikiRepository {
         .bind(&input.chat_model)
         .bind(&input.ingest_channel_id)
         .bind(&input.chat_channel_id)
+        .bind(&input.pdf_ocr_channel_id)
+        .bind(&input.pdf_ocr_model)
+        .bind(&input.reasoning_effort)
+        .bind(&input.temperature)
         .bind(&now)
         .bind(&now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("DB error: {}", e))?;
+
+        // 与 RAG 平行：新建 Wiki 项目默认授权全部现有密钥。
+        sqlx::query(
+            "INSERT INTO api_key_wiki_access (api_key_id, project_id)
+             SELECT id, ? FROM api_keys",
+        )
+        .bind(&id)
         .execute(&self.pool)
         .await
         .map_err(|e| format!("DB error: {}", e))?;
@@ -99,10 +113,17 @@ impl WikiRepository {
             .clone()
             .or(current.ingest_channel_id);
         let chat_channel_id = input.chat_channel_id.clone().or(current.chat_channel_id);
+        let pdf_ocr_channel_id = input
+            .pdf_ocr_channel_id
+            .clone()
+            .or(current.pdf_ocr_channel_id);
+        let pdf_ocr_model = input.pdf_ocr_model.clone().or(current.pdf_ocr_model);
+        let reasoning_effort = input.reasoning_effort.clone().or(current.reasoning_effort);
+        let temperature = input.temperature.or(current.temperature);
         let mcp_enabled = input.mcp_enabled.unwrap_or(current.mcp_enabled);
 
         sqlx::query(
-            "UPDATE wiki_projects SET name=?, description=?, status=?, schema_text=?, ingest_model=?, chat_model=?, ingest_channel_id=?, chat_channel_id=?, mcp_enabled=?, updated_at=? WHERE id=?"
+            "UPDATE wiki_projects SET name=?, description=?, status=?, schema_text=?, ingest_model=?, chat_model=?, ingest_channel_id=?, chat_channel_id=?, pdf_ocr_channel_id=?, pdf_ocr_model=?, reasoning_effort=?, temperature=?, mcp_enabled=?, updated_at=? WHERE id=?"
         )
         .bind(&name)
         .bind(&description)
@@ -112,6 +133,10 @@ impl WikiRepository {
         .bind(&chat_model)
         .bind(&ingest_channel_id)
         .bind(&chat_channel_id)
+        .bind(&pdf_ocr_channel_id)
+        .bind(&pdf_ocr_model)
+        .bind(&reasoning_effort)
+        .bind(temperature)
         .bind(mcp_enabled)
         .bind(&now)
         .bind(id)
@@ -208,10 +233,12 @@ impl WikiRepository {
         query: &str,
         top_k: usize,
     ) -> Result<Vec<WikiSearchResult>, String> {
-        // Try FTS5 full-text search first, fallback to LIKE
+        // 实测缺陷：原实现把整句 query 当连续子串匹配，页面叫「首次审核」时
+        // 查「首次申请审核」必然 0 命中（中文无空格分词）。改为：整句优先 + 分词召回 + 命中数打分。
+        let terms = query_terms(query);
         let pattern = format!("%{}%", query);
 
-        // First try LIKE on title and path for quick matches
+        // 1) 整句 LIKE（精确优先）
         let like_rows = sqlx::query_as::<_, WikiPage>(
             "SELECT * FROM wiki_pages WHERE project_id = ? AND status = 'active'
              AND (title LIKE ? OR path LIKE ?)
@@ -225,7 +252,6 @@ impl WikiRepository {
         .await
         .map_err(|e| format!("DB error: {}", e))?;
 
-        // Also search in file contents on disk for better recall
         let mut results: Vec<WikiSearchResult> = like_rows
             .iter()
             .map(|p| WikiSearchResult {
@@ -237,8 +263,46 @@ impl WikiRepository {
                 page_type: p.page_type.clone(),
             })
             .collect();
+        let mut seen: std::collections::HashSet<String> =
+            results.iter().map(|r| r.path.clone()).collect();
 
-        // If we have fewer results than top_k, try reading page files and searching content
+        // 2) 分词 LIKE 召回（title/path 含任一词）
+        if results.len() < top_k && !terms.is_empty() {
+            let mut sql = String::from(
+                "SELECT * FROM wiki_pages WHERE project_id = ? AND status = 'active' AND (",
+            );
+            for (i, _) in terms.iter().enumerate() {
+                if i > 0 {
+                    sql.push_str(" OR ");
+                }
+                sql.push_str("title LIKE ? OR path LIKE ?");
+            }
+            sql.push_str(") ORDER BY title LIMIT ?");
+            let mut q = sqlx::query_as::<_, WikiPage>(&sql).bind(project_id);
+            let patterns: Vec<String> = terms.iter().map(|t| format!("%{}%", t)).collect();
+            for p in &patterns {
+                q = q.bind(p.as_str()).bind(p.as_str());
+            }
+            q = q.bind(top_k as i64 * 2);
+            for p in q
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| format!("DB error: {}", e))?
+            {
+                if seen.insert(p.path.clone()) {
+                    results.push(WikiSearchResult {
+                        page_id: p.id.clone(),
+                        path: p.path.clone(),
+                        title: p.title.clone(),
+                        score: 0.9,
+                        snippet: String::new(),
+                        page_type: p.page_type.clone(),
+                    });
+                }
+            }
+        }
+
+        // 3) 读盘按“命中词数”打分召回（正文含关键词但标题没有的页面）
         if results.len() < top_k {
             let all_pages = sqlx::query_as::<_, WikiPage>(
                 "SELECT * FROM wiki_pages WHERE project_id = ? AND status = 'active' ORDER BY title"
@@ -248,33 +312,48 @@ impl WikiRepository {
             .await
             .map_err(|e| format!("DB error: {}", e))?;
 
-            let existing_paths: std::collections::HashSet<String> =
-                results.iter().map(|r| r.path.clone()).collect();
-
             for page in &all_pages {
-                if existing_paths.contains(&page.path) {
+                if seen.contains(&page.path) {
                     continue;
                 }
-                // Read content from disk and search
                 if let Ok(content) =
                     crate::services::wiki::project::read_page(project_id, &page.path).await
                 {
-                    if let Some(snippet) = build_search_snippet(&content, query) {
-                        results.push(WikiSearchResult {
-                            page_id: page.id.clone(),
-                            path: page.path.clone(),
-                            title: page.title.clone(),
-                            score: 0.8,
-                            snippet,
-                            page_type: page.page_type.clone(),
-                        });
-
-                        if results.len() >= top_k {
-                            break;
-                        }
+                    let hit_terms: Vec<&String> = terms
+                        .iter()
+                        .filter(|t| find_case_insensitive_match_start(&content, t).is_some())
+                        .collect();
+                    let whole_hit = find_case_insensitive_match_start(&content, query).is_some();
+                    if hit_terms.is_empty() && !whole_hit {
+                        continue;
                     }
+                    // snippet：优先整句上下文，否则取首个命中词上下文
+                    let snippet = if whole_hit {
+                        build_search_snippet(&content, query)
+                    } else {
+                        hit_terms
+                            .iter()
+                            .find_map(|t| build_search_snippet(&content, t))
+                    }
+                    .unwrap_or_else(|| content.chars().take(200).collect::<String>());
+                    let score = if whole_hit {
+                        0.95
+                    } else {
+                        0.5 + (hit_terms.len().min(6) as f64) * 0.08
+                    };
+                    results.push(WikiSearchResult {
+                        page_id: page.id.clone(),
+                        path: page.path.clone(),
+                        title: page.title.clone(),
+                        score,
+                        snippet,
+                        page_type: page.page_type.clone(),
+                    });
                 }
             }
+            // 命中越多越靠前
+            results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+            results.truncate(top_k);
         } else {
             // Add snippets for LIKE matches too
             for r in &mut results {
@@ -393,6 +472,21 @@ impl WikiRepository {
         .await
         .map_err(|e| format!("DB error: {}", e))?;
         Ok(id)
+    }
+
+    /// 取消某来源的进行中摄入任务（queue status 置 cancelled）。
+    /// 摄入循环在 await 边界检查到后即终止；已完成/失败的任务不触碰。
+    pub async fn cancel_source_ingest(&self, source_id: &str) -> Result<(), String> {
+        sqlx::query(
+            "UPDATE wiki_ingest_queue SET status='cancelled', completed_at=? \
+             WHERE source_id=? AND status IN ('running','pending')"
+        )
+        .bind(Self::now())
+        .bind(source_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("DB error: {}", e))?;
+        Ok(())
     }
 
     pub async fn update_task_status(
@@ -618,6 +712,55 @@ impl WikiRepository {
     }
 }
 
+/// 是否 CJK 表意文字（覆盖常用中文区）。
+fn is_cjk(c: char) -> bool {
+    matches!(
+        c as u32,
+        0x4E00..=0x9FFF | 0x3400..=0x4DBF | 0xF900..=0xFAFF | 0x3040..=0x30FF
+    )
+}
+
+/// 把自然语言查询切成检索词：
+/// - ASCII 字母数字段整段成词（小写）
+/// - CJK 连续串按 **2-gram 滑窗**切词（中文无空格，"首次申请审核" → 首次/次申/申请/请审/审核）
+/// 用于修复"整句子串匹配"导致中文长问句 0 命中的缺陷。
+fn query_terms(query: &str) -> Vec<String> {
+    let chars: Vec<char> = query.chars().collect();
+    let mut terms: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if is_cjk(c) {
+            let start = i;
+            while i < chars.len() && is_cjk(chars[i]) {
+                i += 1;
+            }
+            let seg: Vec<char> = chars[start..i].to_vec();
+            if seg.len() <= 2 {
+                terms.push(seg.iter().collect());
+            } else {
+                for w in seg.windows(2) {
+                    terms.push(w.iter().collect());
+                }
+            }
+        } else if c.is_alphanumeric() {
+            let start = i;
+            while i < chars.len() && chars[i].is_alphanumeric() && !is_cjk(chars[i]) {
+                i += 1;
+            }
+            let word: String = chars[start..i].iter().collect();
+            terms.push(word.to_lowercase());
+        } else {
+            i += 1;
+        }
+    }
+    terms.retain(|t| !t.trim().is_empty());
+    terms.dedup();
+    // 控制 SQL 规模与噪声
+    terms.truncate(24);
+    terms
+}
+
 fn build_search_snippet(content: &str, query: &str) -> Option<String> {
     let match_start = find_case_insensitive_match_start(content, query)?;
     let match_char_index = content[..match_start].chars().count();
@@ -660,35 +803,33 @@ struct WikiGraphEdgeRow {
     created_at: String,
 }
 
-pub const DEFAULT_SCHEMA: &str = r#"# Wiki Schema
-
-You are a Wiki maintainer. Your job is to read source documents and maintain a structured, interlinked wiki.
-
-## Rules
-- Each page should focus on one entity, concept, or topic.
-- Use `[[wikilinks]]` to connect related pages.
-- Update `index.md` when adding or removing pages.
-- Append to `log.md` on every ingest.
-- Flag contradictions, missing pages, and stale information as reviews.
-- Use YAML frontmatter on each page (title, type, tags, date, source_count).
-
-## Page Types
-- `entity`: A specific thing (person, project, tool, module).
-- `concept`: An abstract idea or pattern.
-- `summary`: A condensed overview of a source.
-- `review`: A flagged item needing human attention.
-
-## File Layout
-- `wiki/index.md` — content catalog.
-- `wiki/log.md` — chronological operation log.
-- `wiki/entities/*.md` — entity pages.
-- `wiki/concepts/*.md` — concept pages.
-- `wiki/summaries/*.md` — source summaries.
-"#;
+/// 默认 Wiki Schema：编译时读取项目根目录 `wiki-prompt.txt` 的内容。
+/// 该文件是用户维护的单一事实来源，修改后重新编译即生效。
+pub const DEFAULT_SCHEMA: &str = include_str!("../../../../wiki-prompt.txt");
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 实测缺陷回归：页面叫「首次审核」，用户问「首次申请审核需要哪些截图」，
+    /// 整句子串匹配 0 命中；分词后必须切出 首次/申请/审核 等词用于召回。
+    #[test]
+    fn query_terms_splits_cjk_long_question_into_bigrams() {
+        let terms = query_terms("首次申请审核需要哪些截图");
+        for want in ["首次", "申请", "审核", "需要", "截图"] {
+            assert!(
+                terms.iter().any(|t| t == want),
+                "缺少词 {want}: {terms:?}"
+            );
+        }
+        assert!(terms.len() <= 24);
+        // 无分隔符的 ASCII 词整段成词并小写
+        let mixed = query_terms("登录 PDF 手册");
+        assert!(mixed.iter().any(|t| t == "pdf"), "{mixed:?}");
+        assert!(mixed.iter().any(|t| t == "登录"), "{mixed:?}");
+        // 空/标点查询不 panic
+        assert!(query_terms("  ？？  ").is_empty() || query_terms("？？").len() <= 24);
+    }
 
     #[test]
     fn search_snippet_handles_cjk_without_splitting_utf8() {

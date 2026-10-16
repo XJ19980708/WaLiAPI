@@ -510,6 +510,17 @@ async fn dispatch(shared: &SharedState, cmd: &str, args: Value) -> Result<Value,
             )
             .await,
         ),
+        "get_api_key_wiki_access" => to_json(
+            commands::api_key::get_api_key_wiki_access(state, arg(&args, "id")?).await,
+        ),
+        "set_api_key_wiki_access" => to_json(
+            commands::api_key::set_api_key_wiki_access(
+                state,
+                arg(&args, "id")?,
+                arg(&args, "projectIds")?,
+            )
+            .await,
+        ),
         "test_api_key_knowledge_health" => to_json(
             commands::api_key::test_api_key_knowledge_health(
                 state,
@@ -890,6 +901,14 @@ async fn dispatch(shared: &SharedState, cmd: &str, args: Value) -> Result<Value,
         "upload_kb_document" => {
             to_json(commands::knowledge_base::upload_kb_document(state, arg(&args, "input")?).await)
         }
+        "upload_kb_document_from_path" => to_json(
+            commands::knowledge_base::upload_kb_document_from_path(
+                state,
+                arg(&args, "kbId")?,
+                arg(&args, "path")?,
+            )
+            .await,
+        ),
         "get_kb_conversations" => to_json(
             commands::knowledge_base::get_kb_conversations(state, arg(&args, "kbId")?).await,
         ),
@@ -958,12 +977,24 @@ async fn dispatch(shared: &SharedState, cmd: &str, args: Value) -> Result<Value,
             )
             .await,
         ),
+        "delete_wiki_page" => to_json(
+            commands::wiki::delete_wiki_page(state, arg(&args, "projectId")?, arg(&args, "path")?)
+                .await,
+        ),
         "get_wiki_sources" => {
             to_json(commands::wiki::get_wiki_sources(state, arg(&args, "projectId")?).await)
         }
         "add_wiki_source" => to_json(
             commands::wiki::add_wiki_source(state, arg(&args, "projectId")?, arg(&args, "input")?)
                 .await,
+        ),
+        "add_wiki_source_from_path" => to_json(
+            commands::wiki::add_wiki_source_from_path(
+                state,
+                arg(&args, "projectId")?,
+                arg(&args, "path")?,
+            )
+            .await,
         ),
         "delete_wiki_source" => {
             to_json(commands::wiki::delete_wiki_source(state, arg(&args, "sourceId")?).await)
@@ -989,6 +1020,14 @@ async fn dispatch(shared: &SharedState, cmd: &str, args: Value) -> Result<Value,
         }
         "ingest_wiki_source" => to_json(
             commands::wiki::ingest_wiki_source(
+                state,
+                arg(&args, "projectId")?,
+                arg(&args, "sourceId")?,
+            )
+            .await,
+        ),
+        "cancel_wiki_ingest" => to_json(
+            commands::wiki::cancel_wiki_ingest(
                 state,
                 arg(&args, "projectId")?,
                 arg(&args, "sourceId")?,

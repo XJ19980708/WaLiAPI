@@ -63,3 +63,14 @@ pub fn create_router(_state: Arc<AppState>) -> Router<SharedState> {
             get(handlers::get_queue_status),
         )
 }
+
+/// Wiki 图像资产路由（只读、免鉴权、token 即凭证）。
+/// 独立于 create_router 的读写鉴权层：`<img>` 静态资源请求无法携带 Bearer，
+/// 安全性由「摄入时逐页生成的随机 token 路径 + 白名单字符校验 + 不记访问日志」保证
+/// （用户已确认「内部资料 / 直连」档位）。
+pub fn assets_router() -> Router<SharedState> {
+    Router::new().route(
+        "/api/wiki/projects/{id}/assets/{token}/{*file}",
+        get(handlers::get_asset),
+    )
+}

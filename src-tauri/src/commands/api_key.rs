@@ -239,6 +239,27 @@ pub async fn set_api_key_knowledge_access(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn get_api_key_wiki_access(
+    state: tauri::State<'_, std::sync::Arc<AppState>>,
+    id: String,
+) -> Result<Vec<String>, String> {
+    crate::server::knowledge_access::get_wiki_grants(&state.db.pool, &id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn set_api_key_wiki_access(
+    state: tauri::State<'_, std::sync::Arc<AppState>>,
+    id: String,
+    project_ids: Vec<String>,
+) -> Result<(), String> {
+    crate::server::knowledge_access::set_wiki_grants(&state.db.pool, &id, &project_ids)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[derive(Serialize)]
 pub struct KnowledgeConnectionTest {
     rest_status: u16,

@@ -502,6 +502,30 @@ pub async fn upload_kb_document(
     Ok(doc)
 }
 
+/// 从本地文件路径导入 RAG 文档（桌面端拖放上传用）：后端读文件 → 转 base64 → 复用 upload_kb_document。
+#[tauri::command]
+pub async fn upload_kb_document_from_path(
+    state: State<'_, Arc<AppState>>,
+    kb_id: String,
+    path: String,
+) -> Result<KbDocument, String> {
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| format!("读取文件失败: {}", e))?;
+    let filename = std::path::Path::new(&path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "无效的文件路径".to_string())?
+        .to_string();
+    let content = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes);
+    let input = UploadDocInput {
+        kb_id,
+        filename,
+        content,
+    };
+    upload_kb_document(state, input).await
+}
+
 // ════════════════════════════════════════════════════════
 // New commands: Conversations, Sources, Index, Import
 // ════════════════════════════════════════════════════════

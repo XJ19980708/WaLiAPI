@@ -9,7 +9,7 @@ use crate::services::wiki::{
 use axum::{
     body::Body,
     extract::{Query, State},
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Json, Response},
     Extension,
 };
@@ -564,10 +564,25 @@ const QUERY_TOOLS: &[&str] = &[
     "get_knowledge_base_stats",
 ];
 
+// Wiki 只读查询工具：API Key（scoped 模式）可用的子集，与 RAG 只读口径一致，
+// 不含任何写入/删除/摄入工具。是否可用由 api_key_wiki_access 授权 + 项目 mcp_enabled 决定。
+const WIKI_QUERY_TOOLS: &[&str] = &[
+    "list_wiki_projects",
+    "get_wiki_project",
+    "list_wiki_pages",
+    "get_wiki_page",
+    "search_wiki",
+    "ask_wiki",
+    "get_wiki_tags",
+    "get_wiki_graph",
+    "list_wiki_sources",
+];
+
 async fn dispatch_scoped(
     shared: &SharedState,
     access: &KnowledgeAccess,
     req: &McpRequest,
+    host: Option<&str>,
 ) -> McpResponse {
     if req.jsonrpc != "2.0" {
         return McpResponse::error(req.id.clone(), -32600, "Expected JSON-RPC 2.0".into());
@@ -584,17 +599,38 @@ async fn dispatch_scoped(
         "tools/list" => {
             let tools: Vec<_> = get_tools()
                 .into_iter()
-                .filter(|tool| QUERY_TOOLS.contains(&tool["name"].as_str().unwrap_or("")))
+                .filter(|tool| {
+                    let name = tool["name"].as_str().unwrap_or("");
+                    if QUERY_TOOLS.contains(&name) {
+                        // 无 RAG 授权时不暴露 KB 工具（纯 Wiki 的 Key 列表保持干净）。
+                        return !access.kb_ids.is_empty();
+                    }
+                    WIKI_QUERY_TOOLS.contains(&name) && !access.wiki_project_ids.is_empty()
+                })
                 .map(|mut tool| {
                     let name = tool["name"].as_str().unwrap_or("").to_string();
-                    tool["description"] = serde_json::json!(match name.as_str() {
-                        "list_knowledge_bases" => "列出已授权且开启 MCP 的 RAG。",
-                        "search_knowledge_base" => "检索指定知识库，支持向量、关键词和混合检索。",
-                        "ask_knowledge_base" => "使用已授权的模型回答问题，返回答案与来源。",
-                        "read_document" => "按切片顺序读取指定文档的已摄入正文。",
-                        _ => "获取指定知识库的文档、切片和 Token 统计。",
-                    });
-                    if name != "list_knowledge_bases" {
+                    // 方案 A：把服务端真实地址注入 ask_wiki 描述，让 LLM 在调用前就知道
+                    // ip:port，回答引用图片时直接拼出完整地址（根治"LLM 拿不到 host 只能编占位符"）。
+                    let desc: String = match name.as_str() {
+                        "list_knowledge_bases" => "列出已授权且开启 MCP 的 RAG。".to_string(),
+                        "search_knowledge_base" => "检索指定知识库，支持向量、关键词和混合检索。".to_string(),
+                        "ask_knowledge_base" => "使用已授权的模型回答问题，返回答案与来源。".to_string(),
+                        "read_document" => "按切片顺序读取指定文档的已摄入正文。".to_string(),
+                        "get_knowledge_base_stats" => "获取指定知识库的文档、切片和 Token 统计。".to_string(),
+                        "list_wiki_projects" => "列出已授权且开启 MCP 的 Wiki 项目。".to_string(),
+                        "ask_wiki" => {
+                            let mut d = "向 Wiki 提问，获取基于 Wiki 页面的 AI 回答。检索相关页面 → LLM 生成回答 → 返回回答 + 来源引用。".to_string();
+                            if let Some(h) = host.as_deref().filter(|h| !h.is_empty()) {
+                                d.push_str(&format!(
+                                    " 图片访问：Wiki 页面中的图片完整地址形如 http://{h}/api/wiki/projects/<project_id>/assets/<token>/<file>。回答引用图片时，必须输出完整 markdown 图片链接 ![描述](http://{h}/api/wiki/...)，禁止省略 host/端口或写成占位符（如 <wiki-host>）。"
+                                ));
+                            }
+                            d
+                        }
+                        _ => "在已授权的 Wiki 项目内查询页面、标签、图谱或问答。".to_string(),
+                    };
+                    tool["description"] = serde_json::json!(desc);
+                    if QUERY_TOOLS.contains(&name.as_str()) && name != "list_knowledge_bases" {
                         tool["inputSchema"]["properties"]["kb_id"]["description"] =
                             serde_json::json!("已授权且开启 MCP 的知识库 ID，必填。");
                         let required = tool["inputSchema"]["required"]
@@ -622,14 +658,14 @@ async fn dispatch_scoped(
         }
         "tools/call" => {
             let name = req.params["name"].as_str().unwrap_or("");
-            if !QUERY_TOOLS.contains(&name) {
+            if !QUERY_TOOLS.contains(&name) && !WIKI_QUERY_TOOLS.contains(&name) {
                 return McpResponse::error(
                     req.id.clone(),
                     -32601,
                     "Tool is not available to this API key".into(),
                 );
             }
-            match scoped_tool_call(shared, access, name, &req.params["arguments"]).await {
+            match scoped_tool_call(shared, access, name, &req.params["arguments"], host).await {
                 Ok(value) => {
                     let args = &req.params["arguments"];
                     // 旧搜索首文本仍是数组；局部成功的元数据单独追加，保留既有解析入口。
@@ -689,6 +725,7 @@ async fn scoped_tool_call(
     access: &KnowledgeAccess,
     name: &str,
     args: &serde_json::Value,
+    host: Option<&str>,
 ) -> Result<serde_json::Value, crate::services::knowledge::model_client::QueryError> {
     use crate::services::knowledge::{model_client::QueryError, models::AskInput};
     let repo = KbRepository::new(shared.state.db.pool.clone());
@@ -697,6 +734,9 @@ async fn scoped_tool_call(
         let kbs: Vec<_> = kbs.iter().filter(|kb| kb.status == 1 && kb.mcp_enabled == 1 && access.kb_ids.contains(&kb.id))
             .map(|kb| serde_json::json!({"id": kb.id, "name": kb.name, "doc_count": kb.doc_count, "chunk_count": kb.chunk_count})).collect();
         return Ok(serde_json::json!(kbs));
+    }
+    if WIKI_QUERY_TOOLS.contains(&name) {
+        return scoped_wiki_tool_call(shared, access, name, args, host).await;
     }
     let kb_id = args["kb_id"].as_str().unwrap_or("");
     let kb = access.require_kb(shared, kb_id, true).await?;
@@ -763,8 +803,53 @@ async fn scoped_tool_call(
     }
 }
 
+/// API Key（scoped）的 Wiki 只读工具：先校验项目授权/启用，再复用全量分发实现。
+async fn scoped_wiki_tool_call(
+    shared: &SharedState,
+    access: &KnowledgeAccess,
+    name: &str,
+    args: &serde_json::Value,
+    host: Option<&str>,
+) -> Result<serde_json::Value, crate::services::knowledge::model_client::QueryError> {
+    use crate::services::knowledge::model_client::QueryError;
+
+    if name == "list_wiki_projects" {
+        let repo = WikiRepository::new(shared.state.db.pool.clone());
+        let projects = repo
+            .list_projects()
+            .await
+            .map_err(|e| QueryError::new(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+        let list: Vec<_> = projects
+            .iter()
+            .filter(|p| {
+                p.status == 1
+                    && p.mcp_enabled == 1
+                    && access.wiki_project_ids.iter().any(|id| id == &p.id)
+            })
+            .map(|p| {
+                serde_json::json!({
+                    "id": p.id,
+                    "name": p.name,
+                    "page_count": p.page_count,
+                    "source_count": p.source_count
+                })
+            })
+            .collect();
+        return Ok(serde_json::json!(list));
+    }
+    let project_id = args["project_id"].as_str().unwrap_or("");
+    access.require_wiki_project(shared, project_id, true).await?;
+    handle_tool_call(shared, name, args, host)
+        .await
+        .map_err(|e| QueryError::new(StatusCode::BAD_REQUEST, e))
+}
+
 /// Main MCP JSON-RPC handler — async dispatch
-async fn dispatch_jsonrpc_async(shared: &SharedState, req: &McpRequest) -> McpResponse {
+async fn dispatch_jsonrpc_async(
+    shared: &SharedState,
+    req: &McpRequest,
+    host: Option<&str>,
+) -> McpResponse {
     match req.method.as_str() {
         "initialize" => McpResponse::success(
             req.id.clone(),
@@ -781,12 +866,22 @@ async fn dispatch_jsonrpc_async(shared: &SharedState, req: &McpRequest) -> McpRe
             }),
         ),
         "notifications/initialized" => McpResponse::success(req.id.clone(), serde_json::json!({})),
-        "tools/list" => McpResponse::success(
-            req.id.clone(),
-            serde_json::json!({
-                "tools": get_tools()
-            }),
-        ),
+        "tools/list" => {
+            let mut tools = get_tools();
+            // 方案 A：非 scoped 模式也注入真实 host 到 ask_wiki 描述（与 dispatch_scoped 一致）
+            if let Some(h) = host.as_deref().filter(|h| !h.is_empty()) {
+                for tool in &mut tools {
+                    if tool["name"].as_str() == Some("ask_wiki") {
+                        let base = tool["description"].as_str().unwrap_or("");
+                        tool["description"] = serde_json::json!(format!(
+                            "{} 图片访问：Wiki 页面中的图片完整地址形如 http://{h}/api/wiki/projects/<project_id>/assets/<token>/<file>。回答引用图片时，必须输出完整 markdown 图片链接 ![描述](http://{h}/api/wiki/...)，禁止省略 host/端口或写成占位符（如 <wiki-host>）。",
+                            base
+                        ));
+                    }
+                }
+            }
+            McpResponse::success(req.id.clone(), serde_json::json!({ "tools": tools }))
+        },
         "tools/call" => {
             let tool_name = req
                 .params
@@ -800,7 +895,7 @@ async fn dispatch_jsonrpc_async(shared: &SharedState, req: &McpRequest) -> McpRe
                 .cloned()
                 .unwrap_or(serde_json::Value::Object(Default::default()));
 
-            match handle_tool_call(shared, tool_name, &args).await {
+            match handle_tool_call(shared, tool_name, &args, host).await {
                 Ok(result) => McpResponse::success(req.id.clone(), result),
                 Err(e) => McpResponse::error(req.id.clone(), -32603, e),
             }
@@ -913,10 +1008,18 @@ pub struct McpQueryParams {
 pub async fn handle_mcp(
     State(shared): State<SharedState>,
     Query(params): Query<McpQueryParams>,
+    headers: HeaderMap,
     access: Option<Extension<KnowledgeAccess>>,
     body: axum::body::Bytes,
 ) -> Response {
     let body_str = String::from_utf8_lossy(&body);
+
+    // 供 ask_wiki 等处把页面内 root-relative 图像 URL 补成可渲染的绝对地址
+    // （按客户端实际访问本服务所用的 Host 动态构造，适配 127.0.0.1 / VPN 虚拟 IP / 内网 IP）。
+    let host = headers
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .map(|h| format!("http://{h}"));
 
     // Parse JSON-RPC request
     let req: McpRequest = match serde_json::from_str(&body_str) {
@@ -930,9 +1033,9 @@ pub async fn handle_mcp(
     let is_notification = req.id.is_none();
 
     let response = if let Some(Extension(access)) = access {
-        dispatch_scoped(&shared, &access, &req).await
+        dispatch_scoped(&shared, &access, &req, host.as_deref()).await
     } else {
-        dispatch_jsonrpc_async(&shared, &req).await
+        dispatch_jsonrpc_async(&shared, &req, host.as_deref()).await
     };
 
     // If session_id is provided, push response through SSE stream
@@ -972,6 +1075,7 @@ async fn handle_tool_call(
     shared: &SharedState,
     tool_name: &str,
     args: &serde_json::Value,
+    host: Option<&str>,
 ) -> Result<serde_json::Value, String> {
     let pool = &shared.state.db.pool;
 
@@ -1253,6 +1357,7 @@ async fn handle_tool_call(
                     input.strict_retrieval,
                     input.candidate_k,
                     input.reasoning_effort.as_deref(),
+                    input.temperature,
                 )),
             )
             .await
@@ -1365,6 +1470,8 @@ async fn handle_tool_call(
                 embedding_channel_id: embedding_channel_id.map(|s| s.to_string()),
                 // MCP 工具不暴露 OCR 模型配置（在知识库设置表单中配置）
                 ocr_model: None,
+                reasoning_effort: None,
+                temperature: None,
             };
 
             let kb_repo = KbRepository::new(pool.clone());
@@ -1427,6 +1534,11 @@ async fn handle_tool_call(
                 embedding_batch_size: args.get("embedding_batch_size").and_then(|b| b.as_i64()),
                 // MCP 工具不暴露 OCR 模型配置（在知识库设置表单中配置）
                 ocr_model: None,
+                reasoning_effort: args
+                    .get("reasoning_effort")
+                    .and_then(|s| s.as_str())
+                    .map(|s| s.to_string()),
+                temperature: args.get("temperature").and_then(|t| t.as_f64()),
             };
 
             let kb_repo = KbRepository::new(pool.clone());
@@ -2105,7 +2217,7 @@ async fn handle_tool_call(
             let top_k = args.get("top_k").and_then(|t| t.as_u64()).unwrap_or(5) as usize;
             let model = args.get("model").and_then(|m| m.as_str());
 
-            let result = wiki_handlers::ask_inner(shared, project_id, question, top_k, model).await;
+            let result = wiki_handlers::ask_inner(shared, project_id, question, top_k, model, host).await;
 
             match result {
                 Ok(json) => Ok(serde_json::json!({
@@ -2276,6 +2388,8 @@ async fn handle_tool_call(
                     .get("description")
                     .and_then(|d| d.as_str())
                     .map(|s| s.to_string()),
+                pdf_ocr_channel_id: None,
+                pdf_ocr_model: None,
                 ingest_model: args
                     .get("ingest_model")
                     .and_then(|m| m.as_str())
@@ -2296,6 +2410,11 @@ async fn handle_tool_call(
                     .get("schema_text")
                     .and_then(|s| s.as_str())
                     .map(|s| s.to_string()),
+                reasoning_effort: args
+                    .get("reasoning_effort")
+                    .and_then(|s| s.as_str())
+                    .map(|s| s.to_string()),
+                temperature: args.get("temperature").and_then(|t| t.as_f64()),
             };
 
             let project_id = wiki_project::new_uuid();

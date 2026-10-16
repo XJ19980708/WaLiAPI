@@ -24,6 +24,10 @@ pub struct KbKnowledgeBase {
     /// 知识库级 OCR 视觉模型（如 qwen-vl-max）；None/空 = 不启用。
     /// 仅在全局设置 ocr.enabled 开启后对扫描版 PDF 生效。
     pub ocr_model: Option<String>,
+    /// 知识库级推理档位（default/none/low/medium/high）；None/空 = 跟随模型默认。
+    pub reasoning_effort: Option<String>,
+    /// 知识库级采样温度（0~2）；None = 用问答默认值。
+    pub temperature: Option<f64>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -35,6 +39,8 @@ pub struct CreateKbInput {
     pub embedding_model: Option<String>,
     pub embedding_channel_id: Option<String>,
     pub ocr_model: Option<String>,
+    pub reasoning_effort: Option<String>,
+    pub temperature: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +58,8 @@ pub struct UpdateKbInput {
     pub included_files: Option<String>,
     pub embedding_batch_size: Option<i64>,
     pub ocr_model: Option<String>,
+    pub reasoning_effort: Option<String>,
+    pub temperature: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -291,6 +299,9 @@ pub struct AskInput {
     /// 省略或 default 不覆盖网关 / 模型默认；其他档位使用通用协议参数。
     #[serde(default)]
     pub reasoning_effort: Option<String>,
+    /// 采样温度（0~2）；省略时用知识库级配置，再省略则跟随模型默认。
+    #[serde(default)]
+    pub temperature: Option<f64>,
 }
 
 fn default_top_k() -> usize {

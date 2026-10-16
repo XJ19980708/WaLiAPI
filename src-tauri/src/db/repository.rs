@@ -1190,6 +1190,15 @@ impl Repository {
         .execute(&mut *tx)
         .await?;
 
+        // 与 RAG 平行：新建密钥默认授权全部现有 Wiki 项目。
+        sqlx::query(
+            "INSERT INTO api_key_wiki_access (api_key_id, project_id)
+             SELECT ?, id FROM wiki_projects",
+        )
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
+
         let api_key = sqlx::query_as::<_, ApiKey>("SELECT * FROM api_keys WHERE id = ?")
             .bind(&id)
             .fetch_one(&mut *tx)
