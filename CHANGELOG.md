@@ -5,7 +5,7 @@
 ### Qoder Auth 渠道（@fuzhengwei）
 
 - ✨ **新增 Qoder Auth Provider**：新增 `auth_provider/qoder_backend.rs`、`qoder_cosy.rs`、`qoder_login.rs`，Auth 账号体系接入 Qoder OAuth 登录、Token 刷新与模型发现；路由规划器（`route_plan.rs`）识别 Qoder 渠道身份
-- ✨ **Qoder 协议编解码器**：新增 `protocol/codec/qoder/`（含聚合聚合层），注册进 codec registry，支持 Qoder 渠道的请求/响应双向转换；前端登录弹窗、Provider 选项、Auth 渠道页同步接入
+- ✨ **Qoder 协议编解码器**：新增 `protocol/codec/qoder/`（含聚合层），注册进 codec registry，支持 Qoder 渠道的请求/响应双向转换；前端登录弹窗、Provider 选项、Auth 渠道页同步接入
 
 ### Wiki / RAG 体验优化（PR #159，@freakojc）
 
@@ -26,6 +26,7 @@
 
 ### 文档与其他
 
+- 🐛 **旧版 WebKit 渐变兼容修复（ADR 0002）**：Tailwind v4 给 `bg-gradient-to-*` 编译出 `in oklab` 颜色空间插值语法（WebKit 16.4 起支持），旧版 WKWebView 解析失败静默丢弃整条 `background-image`，导致仪表盘「网关路由」WaLiAPI 图标盒蓝色渐变丢失、白色图标不可见；在 `App.css` 以未分层 CSS 重定义渐变方向变量剥离 `in oklab`，全库 10+ 文件的渐变一次性修复（详见 `docs/adr/0002`）
 - 📝 **README 多语言化**：主文档顶部新增「30 秒看懂 WaLiAPI」Mermaid 架构图与产品化 Hero；新增英文（`README.en.md`）与日文（`README.ja.md`）版本，顶部可切换语言；贡献者表后置至文档末尾
 - 📝 **MCP 网关规划文档**：新增 `docs/mcp-gateway-feasibility.md` 与 `docs/mcp-gateway-plan.md`
 - 🔧 **仓库整理**：`.gitignore` 补充本地临时产物忽略规则（根目录一次性工具项目、Playwright 产物、本地截图与笔记）

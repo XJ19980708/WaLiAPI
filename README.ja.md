@@ -388,6 +388,7 @@ WaLiAPI は**ローカル / イントラネット優先**で設計されてい�
 - ✨ **Wiki PDF 取り込みの全面修復**（PR #159、@freakojc）：`services/wiki/ingest.rs` を書き直し、OCR レンダリング強化。API Key ごとにナレッジベース / Wiki へのアクセス許可を個別設定可能に、RAG・Wiki Q&A の推論温度を個別設定可能に、取り込み進捗をモジュールレベル状態に変更
 - ✨ **可観測性とダッシュボード**：リクエスト意図分類（`prompt_classify.rs`）、ダッシュボードに `RouteMapCard` ルーティングマップと `TokenHeatmap` を追加
 - ✨ **API ログのクライアント識別**：リクエスト特徴から下流クライアント（Claude Code / Codex / ChatBox など）を識別して記録し、ログページでフィルタ可能
+- 🐛 **旧 WebKit 向けグラデーション互換修復（ADR 0002）**：`bg-gradient-to-*` が出力する `in oklab` 補間構文を旧 WKWebView が黙って破棄し、グラデーション背景が消失（例：ルートマップカードの WaLiAPI アイコンが空白化）。`App.css` で一括修復
 - 📝 **README 多言語化**：「30 秒でわかる WaLiAPI」Mermaid 図、英語版・日本語版と言語切替を追加
 - 🔧 **バージョンを 0.4.2 に更新**（package.json / Cargo.toml / tauri.conf.json / Cargo.lock）
 

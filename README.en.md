@@ -426,6 +426,7 @@ The full release history (in Chinese) is maintained in the [main README](README.
 - ✨ **Wiki PDF ingestion fixed end-to-end** (PR #159, @freakojc): rewritten `services/wiki/ingest.rs`, enhanced OCR rendering; API Keys can now be granted fine-grained knowledge-base / Wiki access; per-feature reasoning temperature for RAG and Wiki Q&A; modular ingest progress state
 - ✨ **Observability & dashboard**: request-intent classification (`prompt_classify.rs`), new `RouteMapCard` routing-map and `TokenHeatmap` components on the Dashboard
 - ✨ **API log client identification**: downstream clients (Claude Code / Codex / ChatBox …) are recognized from request signatures, stored, and filterable in the Logs page
+- 🐛 **Old-WebKit gradient compatibility fix (ADR 0002)**: `bg-gradient-to-*` emitted `in oklab` interpolation syntax that old WKWebView silently drops, blanking gradient backgrounds (e.g. the WaLiAPI gateway icon on the Route Map card); fixed once in `App.css` for the whole codebase
 - 📝 **Multilingual README**: new "WaLiAPI in 30 Seconds" Mermaid diagram, English and Japanese versions with a language switcher
 - 🔧 **Version bump to 0.4.2** (package.json / Cargo.toml / tauri.conf.json / Cargo.lock)
 

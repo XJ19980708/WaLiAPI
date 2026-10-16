@@ -13,3 +13,4 @@
 | 编号 | 标题 | 状态 | 日期 |
 | --- | --- | --- | --- |
 | [0001](./0001-tailwind-v4-breakpoint-old-webkit-compat.md) | 用 @custom-variant 重定义 Tailwind v4 断点以兼容旧版 WebKit | accepted | 2026-10-01 |
+| [0002](./0002-tailwind-v4-gradient-in-oklab-old-webkit-compat.md) | 重定义 Tailwind v4 渐变方向变量以剥离 in oklab，兼容旧版 WebKit | accepted | 2026-10-16 |

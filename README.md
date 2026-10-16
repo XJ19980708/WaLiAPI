@@ -746,6 +746,7 @@ WaLiAPI 定位为**本地 / 内网优先**的 LLM 网关。公网部署前请先
 
 #### 其他
 
+- 🐛 **旧版 WebKit 渐变兼容修复（ADR 0002）**：修复旧版 WKWebView 上 `bg-gradient-to-*` 因 `in oklab` 语法被静默丢弃导致的渐变丢失（典型症状：「网关路由」卡片 WaLiAPI 图标空白），详见 `docs/adr/0002`
 - 📝 **README 多语言化**：主文档顶部新增「30 秒看懂 WaLiAPI」Mermaid 架构图与产品化 Hero；新增英文、日文版本（顶部可切换）；贡献者表后置至文档末尾
 - 📝 **MCP 网关规划文档**：新增 `docs/mcp-gateway-feasibility.md` 与 `docs/mcp-gateway-plan.md`
 - 🔧 **版本号统一升级至 0.4.2**（package.json / Cargo.toml / tauri.conf.json / Cargo.lock）
