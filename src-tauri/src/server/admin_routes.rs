@@ -510,9 +510,9 @@ async fn dispatch(shared: &SharedState, cmd: &str, args: Value) -> Result<Value,
             )
             .await,
         ),
-        "get_api_key_wiki_access" => to_json(
-            commands::api_key::get_api_key_wiki_access(state, arg(&args, "id")?).await,
-        ),
+        "get_api_key_wiki_access" => {
+            to_json(commands::api_key::get_api_key_wiki_access(state, arg(&args, "id")?).await)
+        }
         "set_api_key_wiki_access" => to_json(
             commands::api_key::set_api_key_wiki_access(
                 state,
@@ -553,6 +553,7 @@ async fn dispatch(shared: &SharedState, cmd: &str, args: Value) -> Result<Value,
         // ── 日志 ──
         "get_logs" => to_json(commands::log::get_logs(arg(&args, "input")?, state).await),
         "count_logs" => to_json(commands::log::count_logs(arg(&args, "input")?, state).await),
+        "get_log_filter_options" => to_json(commands::log::get_log_filter_options(state).await),
         "get_log" => to_json(commands::log::get_log(arg(&args, "id")?, state).await),
         "get_log_security_findings" => {
             to_json(commands::log::get_log_security_findings(arg(&args, "logId")?, state).await)

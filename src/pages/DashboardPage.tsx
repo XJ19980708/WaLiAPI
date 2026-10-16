@@ -728,6 +728,11 @@ function TokenTrendChart({
       return next;
     });
   };
+  // 图例折叠：默认只显示前两行（10 个），更多点击展开
+  const LEGEND_COLLAPSED = 10;
+  const [legendExpanded, setLegendExpanded] = useState(false);
+  const legendModels = legendExpanded ? modelList : modelList.slice(0, LEGEND_COLLAPSED);
+  const legendCanExpand = modelList.length > LEGEND_COLLAPSED;
   const visibleSeries = useMemo(
     () => seriesByModel.filter(s => !hiddenModels.has(s.model)),
     [seriesByModel, hiddenModels]
@@ -829,10 +834,10 @@ function TokenTrendChart({
         </div>
       </div>
 
-      {/* 图例 */}
+      {/* 图例：默认前 10 个，更多折叠进「展开」按钮 */}
       {modelList.length > 0 && (
         <div className="mt-3 flex flex-wrap items-center gap-3">
-          {modelList.map((m, i) => {
+          {legendModels.map((m, i) => {
             const hidden = hiddenModels.has(m);
             return (
               <button
@@ -851,6 +856,16 @@ function TokenTrendChart({
               </button>
             );
           })}
+          {legendCanExpand && (
+            <button
+              onClick={() => setLegendExpanded(e => !e)}
+              className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+              title={legendExpanded ? "收起图例" : "展开全部图例"}
+            >
+              {legendExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              {legendExpanded ? "收起" : `展开更多（${modelList.length - LEGEND_COLLAPSED}）`}
+            </button>
+          )}
         </div>
       )}
 

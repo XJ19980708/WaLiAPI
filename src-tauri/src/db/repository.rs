@@ -2558,7 +2558,7 @@ impl Repository {
         offset: i64,
     ) -> Result<Vec<crate::db::models::RequestLogSummary>, sqlx::Error> {
         self.search_log_summaries(
-            None, None, None, None, None, None, None, None, limit, offset,
+            None, None, None, None, None, None, None, None, None, limit, offset,
         )
         .await
     }
@@ -2568,6 +2568,7 @@ impl Repository {
         keyword: Option<&str>,
         api_key_name: Option<&str>,
         channel_name: Option<&str>,
+        client_name: Option<&str>,
         model: Option<&str>,
         date_from: Option<&str>,
         date_to: Option<&str>,
@@ -2613,6 +2614,11 @@ impl Repository {
                     .push_bind(format!("%{}%", value));
             }
         }
+        if let Some(value) = client_name {
+            // 调用来源做精确匹配：chips 的值本身就来自库里的去重结果，
+            // 精确匹配避免 "Claude" 误命中 "Claude Code" 这类前缀重叠名。
+            q.push(" AND client_name = ").push_bind(value);
+        }
         if let Some(value) = model {
             let pattern = format!("%{}%", value);
             q.push(" AND (model LIKE ").push_bind(pattern.clone());
@@ -2644,6 +2650,7 @@ impl Repository {
         keyword: Option<&str>,
         api_key_name: Option<&str>,
         channel_name: Option<&str>,
+        client_name: Option<&str>,
         model: Option<&str>,
         date_from: Option<&str>,
         date_to: Option<&str>,
@@ -2673,6 +2680,10 @@ impl Repository {
                     .push(" LIKE ")
                     .push_bind(format!("%{}%", value));
             }
+        }
+        if let Some(value) = client_name {
+            // 与列表侧一致：调用来源精确匹配。
+            q.push(" AND client_name = ").push_bind(value);
         }
         if let Some(value) = model {
             let pattern = format!("%{}%", value);
@@ -2991,6 +3002,47 @@ impl Repository {
         )
         .fetch_all(&self.pool)
         .await
+    }
+
+    /// 日志页快捷筛选选项：近 `days` 天内调用来源 / 渠道的去重列表（附请求数）。
+    /// 按 请求数 DESC、名称 ASC 排序后各截取前 `max_clients` / `max_channels` 个。
+    /// 渠道取全部时间的去重名（渠道可能最近 7 天没流量但仍需可筛），
+    /// 附带近 7 天请求数仅作热度参考。client_name IS NOT NULL 的行才计入来源。
+    pub async fn get_log_filter_options(
+        &self,
+        days: i64,
+        max_clients: usize,
+        max_channels: usize,
+    ) -> Result<(Vec<(String, i64)>, Vec<(String, i64)>), sqlx::Error> {
+        let since = (chrono::Utc::now() - chrono::Duration::days(days))
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string();
+
+        let clients = sqlx::query_as::<_, (String, i64)>(
+            "SELECT client_name, COUNT(*) AS cnt FROM request_logs \
+             WHERE client_name IS NOT NULL AND client_name != '' AND created_at >= ? \
+             GROUP BY client_name ORDER BY cnt DESC, client_name ASC LIMIT ?",
+        )
+        .bind(&since)
+        .bind(max_clients as i64)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let channels = sqlx::query_as::<_, (String, i64)>(
+            "SELECT ch.name, COALESCE(hot.cnt, 0) AS cnt \
+             FROM (SELECT DISTINCT channel_name AS name FROM request_logs \
+                   WHERE channel_name IS NOT NULL AND channel_name != '') ch \
+             LEFT JOIN (SELECT channel_name, COUNT(*) AS cnt FROM request_logs \
+                        WHERE created_at >= ? GROUP BY channel_name) hot \
+                   ON hot.channel_name = ch.name \
+             ORDER BY cnt DESC, ch.name ASC LIMIT ?",
+        )
+        .bind(&since)
+        .bind(max_channels as i64)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok((clients, channels))
     }
 
     pub async fn get_log_stats(&self, days: i64) -> Result<Vec<LogStats>, sqlx::Error> {

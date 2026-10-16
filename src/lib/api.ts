@@ -112,11 +112,24 @@ export interface GetLogsInput {
   keyword?: string;
   api_key_name?: string;
   channel_name?: string;
+  /** 调用来源精确匹配（快捷筛选 chips 使用，值来自 getLogFilterOptions）。 */
+  client_name?: string;
   model?: string;
   date_from?: string;
   date_to?: string;
   trace_id?: string;
   upstream_type?: "channel" | "auth_account";
+}
+
+/** 日志快捷筛选选项：近 7 天调用来源 / 渠道去重列表（附请求数，降序）。 */
+export interface LogFilterOption {
+  name: string;
+  count: number;
+}
+
+export interface LogFilterOptions {
+  clients: LogFilterOption[];
+  channels: LogFilterOption[];
 }
 
 // Log commands
@@ -125,6 +138,8 @@ export const logApi = {
   getAll: (input?: GetLogsInput) => invoke<RequestLog[]>("get_logs", { input: input || {} }),
   /** 与 getAll 相同过滤条件下的日志总数，用于分页页码展示。 */
   count: (input?: GetLogsInput) => invoke<number>("count_logs", { input: input || {} }),
+  /** 快捷筛选选项：最近调用来源 + 渠道（按近 7 天请求数降序）。 */
+  getFilterOptions: () => invoke<LogFilterOptions>("get_log_filter_options", {}),
   get: (id: string) => invoke<RequestLog>("get_log", { id }),
   getSecurityFindings: (logId: string) => invoke<SecurityFinding[]>("get_log_security_findings", { logId }),
   /** 流式请求的已生成内容段（detailed 策略下落库；按 seq 升序拼接即完整内容）。 */

@@ -215,6 +215,8 @@ pub struct GetLogsInput {
     pub keyword: Option<String>,
     pub api_key_name: Option<String>,
     pub channel_name: Option<String>,
+    /// 调用来源精确匹配（快捷筛选 chips 使用，值来自 get_log_filter_options）。
+    pub client_name: Option<String>,
     pub model: Option<String>,
     pub date_from: Option<String>,
     pub date_to: Option<String>,
@@ -241,6 +243,7 @@ pub async fn get_logs_impl(
     let has_search = input.keyword.is_some()
         || input.api_key_name.is_some()
         || input.channel_name.is_some()
+        || input.client_name.is_some()
         || input.model.is_some()
         || input.date_from.is_some()
         || input.date_to.is_some()
@@ -252,6 +255,7 @@ pub async fn get_logs_impl(
             input.keyword.as_deref(),
             input.api_key_name.as_deref(),
             input.channel_name.as_deref(),
+            input.client_name.as_deref(),
             input.model.as_deref(),
             input.date_from.as_deref(),
             input.date_to.as_deref(),
@@ -286,6 +290,7 @@ pub async fn count_logs_impl(
         input.keyword.as_deref(),
         input.api_key_name.as_deref(),
         input.channel_name.as_deref(),
+        input.client_name.as_deref(),
         input.model.as_deref(),
         input.date_from.as_deref(),
         input.date_to.as_deref(),
@@ -294,6 +299,48 @@ pub async fn count_logs_impl(
     )
     .await
     .map_err(|e| e.to_string())
+}
+
+/// 快捷筛选选项：最近用过的调用来源（client_name）+ 全部渠道，按近 7 天
+/// 调用量倒序，供日志页一键筛选 chips 展示。空库/异常时返回空数组不报错。
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LogFilterOptionDto {
+    pub name: String,
+    pub count: i64,
+}
+
+#[tauri::command]
+pub async fn get_log_filter_options(
+    state: tauri::State<'_, std::sync::Arc<AppState>>,
+) -> Result<LogFilterOptionsDto, String> {
+    get_log_filter_options_impl(&*state).await
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LogFilterOptionsDto {
+    /// 最近调用的来源（client_name），最多 6 个。
+    pub clients: Vec<LogFilterOptionDto>,
+    /// 渠道，最多 8 个。
+    pub channels: Vec<LogFilterOptionDto>,
+}
+
+pub async fn get_log_filter_options_impl(
+    state: &std::sync::Arc<AppState>,
+) -> Result<LogFilterOptionsDto, String> {
+    let repo = Repository::new(state.db.pool.clone());
+    let (clients, channels) = repo
+        .get_log_filter_options(7, 6, 8)
+        .await
+        .map_err(|e| e.to_string())?;
+    let to_dto = |rows: Vec<(String, i64)>| {
+        rows.into_iter()
+            .map(|(name, count)| LogFilterOptionDto { name, count })
+            .collect()
+    };
+    Ok(LogFilterOptionsDto {
+        clients: to_dto(clients),
+        channels: to_dto(channels),
+    })
 }
 
 #[tauri::command]

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef } from "react";
 import { Link } from "react-router-dom";
 import { logApi, channelApi } from "../lib/api";
-import type { DeleteLogsInput, DeleteLogsReport, CleanupChannelInput, CleanupChannelReport } from "../lib/api";
+import type { DeleteLogsInput, DeleteLogsReport, CleanupChannelInput, CleanupChannelReport, LogFilterOptions } from "../lib/api";
 import type { Channel } from "../types";
 import type { RequestLog, SecurityFinding } from "../types";
 import { formatTimeParts, formatDuration, formatNumber } from "../lib/constants";
@@ -14,7 +14,7 @@ import { PromptPartsData, PromptPartsBadges, AttemptsCard, TtftLabel } from "../
 import {
   ScrollText, RefreshCw, Trash2, ChevronDown, ChevronRight, AlertCircle,
   Bot, User, Wrench, Terminal, Eye, FileCode2, ArrowRightLeft, ArrowUp, ArrowDown, ArrowDownLeft, ArrowUpRight, Shield, Timer, Coins, Zap,
-  Search, X, Calendar, Key, Server, Box, ShieldAlert, Brain,
+  Search, X, Calendar, Key, Server, Box, ShieldAlert, Brain, MessageSquare, Layers,
 } from "lucide-react";
 
 const PAGE_SIZE = 20;
@@ -304,13 +304,17 @@ export function LogsPage() {
   const [keyword, setKeyword] = useState("");
   const [filterApiKey, setFilterApiKey] = useState("");
   const [filterChannel, setFilterChannel] = useState("");
+  const [filterClientName, setFilterClientName] = useState("");
   const [filterModel, setFilterModel] = useState("");
   const [filterDateFrom, setFilterDateFrom] = useState("");
   const [filterDateTo, setFilterDateTo] = useState("");
   const [filterTraceId, setFilterTraceId] = useState("");
   const [filterUpstreamType, setFilterUpstreamType] = useState<"" | "channel" | "auth_account">("");
 
-  const hasActiveFilters = keyword || filterApiKey || filterChannel || filterModel || filterDateFrom || filterDateTo || filterTraceId || filterUpstreamType;
+  // 快捷筛选 chips 数据源：最近调用来源 + 渠道（近 7 天请求数降序）
+  const [filterOptions, setFilterOptions] = useState<LogFilterOptions>({ clients: [], channels: [] });
+
+  const hasActiveFilters = keyword || filterApiKey || filterChannel || filterClientName || filterModel || filterDateFrom || filterDateTo || filterTraceId || filterUpstreamType;
 
   // 请求序号：过滤条件快速变化时只接受最新一次请求的响应，
   // 乱序返回的陈旧数据不得覆盖新数据（FIX-15/NEW-2 统一模式）。
@@ -325,6 +329,7 @@ export function LogsPage() {
       keyword: keyword || undefined,
       api_key_name: filterApiKey || undefined,
       channel_name: filterChannel || undefined,
+      client_name: filterClientName || undefined,
       model: filterModel || undefined,
       // created_at 存储为 UTC 完整时间戳（如 2026-07-20T12:34:56.789Z），
       // 需把本地日期转换为覆盖当天 [00:00, 24:00) 的 UTC 时刻，否则
@@ -343,7 +348,14 @@ export function LogsPage() {
     logApi.count(countInput)
       .then(n => { if (seq === loadSeq.current) setTotalCount(n); })
       .catch(() => {});
-  }, [keyword, filterApiKey, filterChannel, filterModel, filterDateFrom, filterDateTo, filterTraceId, filterUpstreamType]);
+  }, [keyword, filterApiKey, filterChannel, filterClientName, filterModel, filterDateFrom, filterDateTo, filterTraceId, filterUpstreamType]);
+
+  // 快捷筛选 chips：进入页面即拉一次（失败静默，chips 直接不显示）。
+  useEffect(() => {
+    logApi.getFilterOptions()
+      .then(setFilterOptions)
+      .catch(() => {});
+  }, []);
 
   // 过滤条件变化防抖 300ms 再重载（FIX-15：此前每个按键直接触发请求）。
   useEffect(() => {
@@ -407,6 +419,7 @@ export function LogsPage() {
     setKeyword("");
     setFilterApiKey("");
     setFilterChannel("");
+    setFilterClientName("");
     setFilterModel("");
     setFilterDateFrom("");
     setFilterDateTo("");
@@ -528,119 +541,195 @@ export function LogsPage() {
         </div>
       </div>
 
-      {/* Search Panel */}
-      {showSearch && (
-        <div className="mx-7 mb-4 p-4 surface rounded-[16px] shrink-0">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-medium text-slate-700 flex items-center gap-2">
-              <Search size={14} /> 搜索筛选
-            </h3>
-            <div className="flex items-center gap-2">
+      {/* Quick filter chips + search panel */}
+      <div className="mx-7 mb-4 shrink-0">
+        {/* 快捷筛选 chips：最近调用来源 / 渠道，一键筛选（再点一次取消）。
+            紧凑精致风：小号胶囊（text-[11px]、px-2 py-0.5）、计数用纯文本小字，
+            选中态用浅色底+主题色描边而非实心填充，整体更轻。 */}
+        {(filterOptions.clients.length > 0 || filterOptions.channels.length > 0) && (
+          <div className="surface mb-3 space-y-1.5 rounded-[14px] px-3.5 py-2.5">
+            {filterOptions.clients.length > 0 && (
+              <div className="flex items-center gap-2">
+                <span className="flex w-10 shrink-0 items-center gap-1 text-[10px] font-medium tracking-wide text-slate-400">
+                  <MessageSquare size={10} /> 来源
+                </span>
+                <div className="flex min-w-0 flex-wrap items-center gap-1">
+                  {filterOptions.clients.map(c => {
+                    const active = filterClientName === c.name;
+                    return (
+                      <button
+                        key={`client-${c.name}`}
+                        onClick={() => { setFilterClientName(active ? "" : c.name); setPage(0); }}
+                        title={active ? `取消筛选「${c.name}」` : `只看来自 ${c.name} 的调用`}
+                        className={`group inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-[3px] text-[11px] leading-none transition-all ${
+                          active
+                            ? "border-teal-500/60 bg-teal-50 font-medium text-teal-700 ring-1 ring-teal-500/25"
+                            : "border-transparent bg-slate-100/80 text-slate-600 hover:border-teal-200 hover:bg-teal-50/70 hover:text-teal-700"
+                        }`}
+                      >
+                        <span className="max-w-[150px] truncate">{c.name}</span>
+                        <span className={`shrink-0 text-[10px] tabular-nums ${
+                          active ? "text-teal-500" : "text-slate-400 group-hover:text-teal-500/80"
+                        }`}>{formatNumber(c.count)}</span>
+                        {active && <X size={9} className="shrink-0 text-teal-500" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {filterOptions.channels.length > 0 && (
+              <div className="flex items-center gap-2">
+                <span className="flex w-10 shrink-0 items-center gap-1 text-[10px] font-medium tracking-wide text-slate-400">
+                  <Layers size={10} /> 渠道
+                </span>
+                <div className="flex min-w-0 flex-wrap items-center gap-1">
+                  {filterOptions.channels.map(ch => {
+                    const active = filterChannel === ch.name;
+                    return (
+                      <button
+                        key={`channel-${ch.name}`}
+                        onClick={() => { setFilterChannel(active ? "" : ch.name); setPage(0); }}
+                        title={active ? `取消筛选「${ch.name}」` : `只看 ${ch.name} 的日志`}
+                        className={`group inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-[3px] text-[11px] leading-none transition-all ${
+                          active
+                            ? "border-blue-500/60 bg-blue-50 font-medium text-blue-700 ring-1 ring-blue-500/25"
+                            : "border-transparent bg-slate-100/80 text-slate-600 hover:border-blue-200 hover:bg-blue-50/70 hover:text-blue-700"
+                        }`}
+                      >
+                        <span className="max-w-[150px] truncate">{ch.name}</span>
+                        <span className={`shrink-0 text-[10px] tabular-nums ${
+                          active ? "text-blue-500" : "text-slate-400 group-hover:text-blue-500/80"
+                        }`}>{formatNumber(ch.count)}</span>
+                        {active && <X size={9} className="shrink-0 text-blue-500" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 搜索面板：主关键词一行 + 高级条件折叠区 */}
+        {showSearch && (
+          <div className="surface rounded-[16px] p-4">
+            <div className="flex items-center gap-3">
+              <div className="relative min-w-0 flex-1">
+                <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="搜索关键词：密钥 / 渠道 / 模型 / 日志 ID…"
+                  value={keyword}
+                  onChange={(e) => { setKeyword(e.target.value); setPage(0); }}
+                  className="w-full rounded-xl border border-slate-200 bg-white/80 py-2.5 pl-10 pr-9 text-sm shadow-sm transition-colors placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+                {keyword && (
+                  <button
+                    onClick={() => { setKeyword(""); setPage(0); }}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300 transition-colors hover:text-slate-500"
+                    title="清空关键词"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
               {hasActiveFilters && (
-                <button onClick={clearFilters} className="text-xs text-slate-500 hover:text-slate-700 flex items-center gap-1">
-                  <X size={12} /> 清除筛选
+                <button onClick={clearFilters} className="flex shrink-0 items-center gap-1 rounded-lg px-2.5 py-2 text-xs text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700">
+                  <X size={13} /> 清除全部筛选
                 </button>
               )}
-              <button onClick={() => setShowSearch(false)} className="text-slate-400 hover:text-slate-600">
-                <X size={16} />
+              <button onClick={() => setShowSearch(false)} className="shrink-0 rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600" title="收起搜索">
+                <ChevronDown size={16} />
               </button>
             </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {/* Keyword search */}
-            <div className="relative">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                placeholder="关键词搜索 (密钥/渠道/模型/ID)"
-                value={keyword}
-                onChange={(e) => { setKeyword(e.target.value); setPage(0); }}
-                className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-              />
-            </div>
-            {/* API Key filter */}
-            <div className="relative">
-              <Key size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                placeholder="密钥名称"
-                value={filterApiKey}
-                onChange={(e) => { setFilterApiKey(e.target.value); setPage(0); }}
-                className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-              />
-            </div>
-            {/* Channel filter */}
-            <div className="relative">
-              <Server size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                placeholder="渠道名称"
-                value={filterChannel}
-                onChange={(e) => { setFilterChannel(e.target.value); setPage(0); }}
-                className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-              />
-            </div>
-            {/* Model filter */}
-            <div className="relative">
-              <Box size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                placeholder="模型名称"
-                value={filterModel}
-                onChange={(e) => { setFilterModel(e.target.value); setPage(0); }}
-                className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-              />
-            </div>
-            <div>
-              <Server size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-              <Select
-                ariaLabel="来源类型"
-                value={filterUpstreamType}
-                onChange={(v) => { setFilterUpstreamType(v as "" | "channel" | "auth_account"); setPage(0); }}
-                className="pl-9"
-                options={[
-                  { value: "", label: "全部来源" },
-                  { value: "channel", label: "API 渠道" },
-                  { value: "auth_account", label: "Auth 账号" },
-                ]}
-              />
-            </div>
-            {/* Trace ID filter */}
-            <div className="relative">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Trace ID"
-                value={filterTraceId}
-                onChange={(e) => { setFilterTraceId(e.target.value); setPage(0); }}
-                className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-              />
-            </div>
-            {/* Date from */}
-            <div className="relative">
-              <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="date"
-                placeholder="开始日期"
-                value={filterDateFrom}
-                onChange={(e) => { setFilterDateFrom(e.target.value); setPage(0); }}
-                className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-              />
-            </div>
-            {/* Date to */}
-            <div className="relative">
-              <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="date"
-                placeholder="结束日期"
-                value={filterDateTo}
-                onChange={(e) => { setFilterDateTo(e.target.value); setPage(0); }}
-                className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-              />
+            <div className="mt-3 grid grid-cols-1 gap-3 border-t border-slate-100 pt-3 sm:grid-cols-2 lg:grid-cols-4">
+              {/* API Key filter */}
+              <div className="relative">
+                <Key size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" />
+                <input
+                  type="text"
+                  placeholder="密钥名称"
+                  value={filterApiKey}
+                  onChange={(e) => { setFilterApiKey(e.target.value); setPage(0); }}
+                  className="w-full rounded-lg border border-transparent bg-slate-50 py-2 pl-8.5 pr-3 text-[13px] transition-colors placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/15"
+                />
+              </div>
+              {/* Channel filter */}
+              <div className="relative">
+                <Server size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" />
+                <input
+                  type="text"
+                  placeholder="渠道名称"
+                  value={filterChannel}
+                  onChange={(e) => { setFilterChannel(e.target.value); setPage(0); }}
+                  className="w-full rounded-lg border border-transparent bg-slate-50 py-2 pl-8.5 pr-3 text-[13px] transition-colors placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/15"
+                />
+              </div>
+              {/* Model filter */}
+              <div className="relative">
+                <Box size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" />
+                <input
+                  type="text"
+                  placeholder="模型名称"
+                  value={filterModel}
+                  onChange={(e) => { setFilterModel(e.target.value); setPage(0); }}
+                  className="w-full rounded-lg border border-transparent bg-slate-50 py-2 pl-8.5 pr-3 text-[13px] transition-colors placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/15"
+                />
+              </div>
+              {/* Upstream type */}
+              <div className="relative">
+                <Server size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" />
+                <Select
+                  ariaLabel="来源类型"
+                  value={filterUpstreamType}
+                  onChange={(v) => { setFilterUpstreamType(v as "" | "channel" | "auth_account"); setPage(0); }}
+                  size="sm"
+                  className="[&_button]:rounded-lg [&_button]:border-transparent [&_button]:bg-slate-50 [&_button]:py-2 [&_button]:pl-8 [&_button]:text-[13px] [&_button:focus]:border-blue-500 [&_button:focus]:bg-white"
+                  options={[
+                    { value: "", label: "全部上游类型" },
+                    { value: "channel", label: "API 渠道" },
+                    { value: "auth_account", label: "Auth 账号" },
+                  ]}
+                />
+              </div>
+              {/* Trace ID filter */}
+              <div className="relative">
+                <Search size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" />
+                <input
+                  type="text"
+                  placeholder="Trace ID"
+                  value={filterTraceId}
+                  onChange={(e) => { setFilterTraceId(e.target.value); setPage(0); }}
+                  className="w-full rounded-lg border border-transparent bg-slate-50 py-2 pl-8.5 pr-3 text-[13px] transition-colors placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/15"
+                />
+              </div>
+              {/* Date from */}
+              <div className="relative">
+                <Calendar size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" />
+                <input
+                  type="date"
+                  aria-label="开始日期"
+                  value={filterDateFrom}
+                  onChange={(e) => { setFilterDateFrom(e.target.value); setPage(0); }}
+                  className="w-full rounded-lg border border-transparent bg-slate-50 py-2 pl-8.5 pr-3 text-[13px] text-slate-600 transition-colors focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/15"
+                />
+              </div>
+              {/* Date to */}
+              <div className="relative">
+                <Calendar size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" />
+                <input
+                  type="date"
+                  aria-label="结束日期"
+                  value={filterDateTo}
+                  onChange={(e) => { setFilterDateTo(e.target.value); setPage(0); }}
+                  className="w-full rounded-lg border border-transparent bg-slate-50 py-2 pl-8.5 pr-3 text-[13px] text-slate-600 transition-colors focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/15"
+                />
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Table area — fills remaining height, scrolls internally */}
       <div className="flex-1 overflow-hidden px-7 pb-7 min-h-0">

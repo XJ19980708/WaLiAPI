@@ -316,6 +316,8 @@ async fn migration_025_kb_ocr_columns_roundtrip() {
             embedding_model: None,
             embedding_channel_id: None,
             ocr_model: Some("qwen-vl-max".into()),
+            reasoning_effort: None,
+            temperature: None,
         })
         .await
         .expect("create kb");
@@ -339,6 +341,8 @@ async fn migration_025_kb_ocr_columns_roundtrip() {
                 included_files: None,
                 embedding_batch_size: None,
                 ocr_model: Some("glm-4v-flash".into()),
+                reasoning_effort: None,
+                temperature: None,
             },
         )
         .await

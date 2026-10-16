@@ -351,6 +351,7 @@ pub fn run() {
             commands::auth::auth_reorder_accounts,
             commands::log::get_logs,
             commands::log::count_logs,
+            commands::log::get_log_filter_options,
             commands::log::get_log,
             commands::log::get_log_security_findings,
             commands::log::get_log_stream_segments,
