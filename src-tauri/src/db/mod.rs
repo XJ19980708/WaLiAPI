@@ -198,6 +198,101 @@ fn migration_max_version() -> i64 {
         .unwrap_or(0)
 }
 
+/// 幂等补齐 0.4.2 重排后的 Wiki/RAG 配置列。
+/// 防御性兜底：正常情况下列由迁移（051/052）或 backfill 兼容路径保证存在；
+/// 这里 PRAGMA 按存在性补齐，类型与代码读取一致（TEXT / REAL）。
+pub async fn ensure_wiki_schema_columns(pool: &sqlx::SqlitePool) -> Result<(), String> {
+    use sqlx::Row;
+    let col_defs: &[(&str, &str, &str)] = &[
+        ("wiki_projects", "pdf_ocr_channel_id", "TEXT"),
+        ("wiki_projects", "pdf_ocr_model", "TEXT"),
+        ("wiki_projects", "reasoning_effort", "TEXT"),
+        ("wiki_projects", "temperature", "REAL"),
+        ("kb_knowledge_bases", "reasoning_effort", "TEXT"),
+        ("kb_knowledge_bases", "temperature", "REAL"),
+    ];
+    for (table, column, col_type) in col_defs {
+        let rows = sqlx::query(&format!("PRAGMA table_info({table})"))
+            .fetch_all(pool)
+            .await
+            .map_err(|e| format!("读取 {table} 列定义失败: {e}"))?;
+        let exists = rows
+            .iter()
+            .any(|r| r.try_get::<String, _>("name").map(|n| n == *column).unwrap_or(false));
+        if !exists {
+            sqlx::query(&format!("ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
+                .execute(pool)
+                .await
+                .map_err(|e| format!("补齐 {table}.{column} 失败: {e}"))?;
+            log::info!("已补齐列 {table}.{column} ({col_type})");
+        }
+    }
+    Ok(())
+}
+
+/// 0.4.2 升级兼容：旧编号 047/048/049（早期 Wiki 迁移：api_key_wiki_access /
+/// wiki_pdf_ocr / wiki_kb_reasoning_temperature）在合并上游主线后重排为 050/051/052。
+///
+/// 升级库的 `_sqlx_migrations` 记录的是旧版本号（47/48/49）。若不处理，sqlx 会把
+/// 050/051/052 当作新迁移执行：050 的 DROP+CREATE 幂等可过，但 051/052 的
+/// `ALTER TABLE ADD COLUMN` 会因列已存在报 duplicate column → 启动 panic 闪退（用户实测）。
+///
+/// 本函数在 migrate 前把「旧编号已应用」映射注册为「新编号已应用」（写入新编号记录、
+/// checksum 取新迁移文件），sqlx 即视为已应用而跳过；新库无旧记录，不受影响，正常执行迁移建列。
+async fn backfill_reranked_migrations(pool: &sqlx::SqlitePool) -> Result<(), String> {
+    let migrator = sqlx::migrate!("./migrations");
+    // 全新库（首次启动）还没有 _sqlx_migrations 表（由 migrate 创建）→ 无需映射，直接返回。
+    let table_exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='_sqlx_migrations'",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("检查迁移记录表失败: {e}"))?;
+    if table_exists == 0 {
+        return Ok(());
+    }
+
+    // (旧编号, 新编号) —— 仅当旧编号确为早期 Wiki 迁移时映射；其它内容同名不映射。
+    let reranked: &[(i64, i64)] = &[(47, 50), (48, 51), (49, 52)];
+
+    for (old_version, new_version) in reranked {
+        let old_applied: Option<(i64,)> = sqlx::query_as(
+            "SELECT 1 FROM _sqlx_migrations WHERE version = ? AND success = 1",
+        )
+        .bind(old_version)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| format!("读取迁移记录失败: {e}"))?;
+        if old_applied.is_none() {
+            continue;
+        }
+        let new_applied: Option<(i64,)> = sqlx::query_as(
+            "SELECT 1 FROM _sqlx_migrations WHERE version = ? AND success = 1",
+        )
+        .bind(new_version)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| format!("读取迁移记录失败: {e}"))?;
+        if new_applied.is_some() {
+            continue;
+        }
+        if let Some(migration) = migrator.iter().find(|m| m.version == *new_version) {
+            sqlx::query(
+                "INSERT INTO _sqlx_migrations (version, description, installed_on, success, checksum, execution_time) \
+                 VALUES (?, ?, datetime('now'), 1, ?, 0)",
+            )
+            .bind(new_version)
+            .bind(migration.description.to_string())
+            .bind(migration.checksum.as_ref())
+            .execute(pool)
+            .await
+            .map_err(|e| format!("注册重排迁移记录失败（{old_version}→{new_version}）: {e}"))?;
+            log::info!("已把旧迁移版本 {old_version} 映射注册为新版本 {new_version}（跳过重复执行，防升级库闪退）");
+        }
+    }
+    Ok(())
+}
+
 /// 数据库当前迁移版本：`_sqlx_migrations` 中最大的已成功版本。
 /// 表不存在或为空时返回 0（全新数据库）。
 async fn current_db_version(pool: &SqlitePool) -> i64 {
@@ -327,11 +422,26 @@ impl Database {
             .await
             .expect("failed to reconcile migration line endings");
 
+        // 0.4.2 升级兼容：旧编号 047/048/049（早期 Wiki 迁移）重排为 050/051/052。
+        // 旧库 _sqlx_migrations 记录的是旧版本；直接跑迁移时 051/052 的 ALTER ADD COLUMN
+        // 会因列已存在报 duplicate column → 启动 panic 闪退。先把旧记录映射注册为新编号
+        // （视为已应用），sqlx 跳过；新库无旧记录，正常执行建列。
+        backfill_reranked_migrations(&pool)
+            .await
+            .expect("failed to backfill reranked migration records");
+
         // Run migrations
         sqlx::migrate!("./migrations")
             .run(&pool)
             .await
             .expect("failed to run database migrations");
+
+        // 幂等补齐 0.4.2 重排后的 Wiki/RAG 配置列：迁移编号重排（旧 047/048/049 → 050/051/052）
+        // 后，升级库若再跑 051/052 的 ALTER ADD COLUMN 会因列已存在报 duplicate column
+        // → 启动 panic 闪退（用户实测）。列现在由这里按存在性幂等补齐。
+        ensure_wiki_schema_columns(&pool)
+            .await
+            .expect("failed to ensure wiki/rag schema columns");
 
         // 补建升级前切片的关键词投影，不改动已有正文和向量。
         crate::services::knowledge::repository::KbRepository::new(pool.clone())
