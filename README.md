@@ -74,7 +74,7 @@ flowchart LR
 - **📚 不止是网关** —— 内置知识库 RAG 引擎（tree-sitter 代码符号感知分块、HNSW + FTS5 混合检索）、Wiki 知识引擎和 MCP Server（29 个工具），让你的 AI Agent 能直接检索私有知识。
 - **🏠 数据完全本地化** —— 桌面端本地运行，SQLite 存储，数据不出你的电脑；同时提供 Docker / headless 服务端，适合团队服务器与私有化部署。
 
-> 💡 推荐配合 LLM 套餐（Kimi K3）使用：[套餐介绍](https://mp.weixin.qq.com/s/jb2YzxFLNhIhjW5EONLcDA)
+> 💡 推荐配合 WaLiCode 编码使用：[https://walicode.xiaofuge.cn](https://walicode.xiaofuge.cn/)
 
 - Github：[https://github.com/fuzhengwei/WaLiAPI](https://github.com/fuzhengwei/WaLiAPI)
 - Gitcode：[https://gitcode.com/fuzhengwei/WaLiAPI](https://gitcode.com/fuzhengwei/WaLiAPI)
