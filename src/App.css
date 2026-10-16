@@ -10,6 +10,33 @@
 @custom-variant xl (@media (min-width: 80rem));
 @custom-variant 2xl (@media (min-width: 96rem));
 
+/* 兼容旧版 WebKit（如 macOS 12 自带 WKWebView）：Tailwind v4 给 bg-gradient-to-*
+   编译出 `--tw-gradient-position: to <方向> in oklab`，其中渐变颜色空间插值语法
+   `in oklab` 从 Safari/WebKit 16.4 才支持；旧版 WebKit 解析失败会静默丢弃整条
+   background-image，渐变背景完全丢失（典型症状：仪表盘「网关路由」卡片中
+   WaLiAPI 图标盒的蓝色渐变消失，白色图标在白底上不可见）。
+   这里以未分层普通 CSS 重定义同名渐变方向变量、去掉 `in oklab`（回退 sRGB 插值），
+   未分层规则优先级高于 Tailwind 的 @layer utilities，旧 WebKit 可正常解析，
+   新浏览器仅插值色彩空间不同，视觉几乎无差异。覆盖 bg-gradient-to-*（v3 名，当前代码
+   在用）与 bg-linear-to-*（v4 新名，未来演进），变量在 Tailwind 内以 syntax:"*" 注册，
+   任意值合法，覆盖安全。 */
+.bg-gradient-to-t    { --tw-gradient-position: to top; }
+.bg-gradient-to-tr   { --tw-gradient-position: to top right; }
+.bg-gradient-to-r    { --tw-gradient-position: to right; }
+.bg-gradient-to-br   { --tw-gradient-position: to bottom right; }
+.bg-gradient-to-b    { --tw-gradient-position: to bottom; }
+.bg-gradient-to-bl   { --tw-gradient-position: to bottom left; }
+.bg-gradient-to-l    { --tw-gradient-position: to left; }
+.bg-gradient-to-tl   { --tw-gradient-position: to top left; }
+.bg-linear-to-t      { --tw-gradient-position: to top; }
+.bg-linear-to-tr     { --tw-gradient-position: to top right; }
+.bg-linear-to-r      { --tw-gradient-position: to right; }
+.bg-linear-to-br     { --tw-gradient-position: to bottom right; }
+.bg-linear-to-b      { --tw-gradient-position: to bottom; }
+.bg-linear-to-bl     { --tw-gradient-position: to bottom left; }
+.bg-linear-to-l      { --tw-gradient-position: to left; }
+.bg-linear-to-tl     { --tw-gradient-position: to top left; }
+
 @theme {
   --color-background: #f5f7fa;
   --color-foreground: #16202b;
