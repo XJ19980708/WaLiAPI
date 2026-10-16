@@ -65,3 +65,20 @@ playwright-report/
 /.workbuddy/memory/2026-09-13.md
 /.workbuddy/memory/2026-09-16.md
 /.workbuddy/
+
+# 本地一次性工具项目（argon2_gen 密码哈希生成，根目录，与仓库无关）
+/Cargo.toml
+/Cargo.lock
+/src/main.rs
+/target/
+
+# Playwright CLI 本地测试产物
+/.playwright-cli/
+/login.yaml
+
+# 本地截图（未在文档中引用）
+/logs-chips-*.png
+
+# 本地构建/使用笔记
+/waliapi_build_complete_*.md
+/waliapi_usage_guide_*.md
