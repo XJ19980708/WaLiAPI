@@ -240,6 +240,9 @@ pub fn run() {
                 });
                 app_handle.manage(state.clone());
 
+                // 注册全局网关事件出口（路由总览页的粒子动画数据源）。
+                server::event_bridge::register_gateway_sink(state.events.clone());
+
                 // Prompt 模板种子（C-07）：空表时写入源码字面量 v1——升级后行为逐字节不变
                 if let Err(error) = crate::prompt_templates::seed_if_empty(&state.db.pool).await {
                     tracing::warn!("[模板] 种子写入失败（运行时回退编译期默认）: {error}");
@@ -356,6 +359,8 @@ pub fn run() {
             commands::log::clear_usage_stats,
             commands::log::cleanup_channel,
             commands::log::get_log_stats,
+            commands::log::get_log_prompt_parts,
+            commands::log::get_log_attempts,
             commands::prompt_template::list_prompt_templates,
             commands::prompt_template::create_prompt_template,
             commands::prompt_template::activate_prompt_template,
@@ -363,6 +368,9 @@ pub fn run() {
             commands::stats::get_dashboard_stats,
             commands::stats::get_model_stats,
             commands::stats::get_token_trend,
+            commands::stats::get_prompt_part_stats,
+            commands::stats::get_route_flow,
+            commands::stats::get_daily_token_stats,
             commands::settings::get_settings,
             commands::network::detect_local_proxies,
             commands::settings::get_feature_flags,

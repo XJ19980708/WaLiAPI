@@ -1832,8 +1832,8 @@ impl Repository {
         // legacy callers using `..Default::default()` persist NULLs for them.
         let mut tx = self.pool.begin().await?;
         sqlx::query(
-            "INSERT INTO request_logs (id, seq, api_key_id, api_key_name, channel_id, channel_name, model, upstream_model, mode, status_code, prompt_tokens, completion_tokens, total_tokens, cached_tokens, duration_ms, error_message, is_stream, is_retry, created_at, request_body, response_choices, risk_level, risk_score, risk_summary, security_action, sanitized, blocked_reason, trace_id, reasoning_effort, downstream_protocol, downstream_endpoint, route_group, upstream_protocol, upstream_endpoint, provider, codec_version, failure_class, identity_revision, client_cancelled, stream_committed, upstream_type, detail_level, client_name)
-             VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM request_logs), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO request_logs (id, seq, api_key_id, api_key_name, channel_id, channel_name, model, upstream_model, mode, status_code, prompt_tokens, completion_tokens, total_tokens, cached_tokens, duration_ms, error_message, is_stream, is_retry, created_at, request_body, response_choices, risk_level, risk_score, risk_summary, security_action, sanitized, blocked_reason, trace_id, reasoning_effort, downstream_protocol, downstream_endpoint, route_group, upstream_protocol, upstream_endpoint, provider, codec_version, failure_class, identity_revision, client_cancelled, stream_committed, upstream_type, detail_level, client_name, ttft_ms, attempts)
+             VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM request_logs), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(&log.id)
         .bind(&log.api_key_id)
@@ -1877,6 +1877,8 @@ impl Repository {
         .bind(&log.upstream_type)
         .bind(policy.detail_level.as_str())
         .bind(&log.client_name)
+        .bind(log.ttft_ms)
+        .bind(log.attempts)
         .execute(&mut *tx)
         .await?;
         // 用量统计 UPSERT:同一事务内累加,与日志同生共死。
@@ -1958,6 +1960,172 @@ impl Repository {
             .collect())
     }
 
+    // ==================== 可观测性（迁移 048） ====================
+
+    /// 覆写一条日志的按消息分类 token 拆分（先删后插，便于估算→校准两阶段写）。
+    pub async fn replace_prompt_parts(
+        &self,
+        log_id: &str,
+        parts: &[crate::db::models::NewLogPromptPart],
+    ) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM log_prompt_parts WHERE log_id = ?")
+            .bind(log_id)
+            .execute(&mut *tx)
+            .await?;
+        for part in parts {
+            sqlx::query(
+                "INSERT INTO log_prompt_parts (log_id, kind, items, tokens, est_tokens, created_at) \
+                 VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(log_id)
+            .bind(&part.kind)
+            .bind(part.items)
+            .bind(part.tokens)
+            .bind(part.est_tokens)
+            .bind(crate::db::models::now_iso())
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await
+    }
+
+    /// 追加一次上游物理尝试明细（best-effort：失败仅告警，不影响主流程）。
+    pub async fn append_log_attempt(
+        &self,
+        attempt: &crate::db::models::NewLogAttempt,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO log_attempts (log_id, seq, channel_id, channel_name, upstream_model, \
+             status_code, outcome, error_message, duration_ms, ttft_ms, is_final, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&attempt.log_id)
+        .bind(attempt.seq)
+        .bind(&attempt.channel_id)
+        .bind(&attempt.channel_name)
+        .bind(&attempt.upstream_model)
+        .bind(attempt.status_code)
+        .bind(&attempt.outcome)
+        .bind(&attempt.error_message)
+        .bind(attempt.duration_ms)
+        .bind(attempt.ttft_ms)
+        .bind(i64::from(attempt.is_final))
+        .bind(crate::db::models::now_iso())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn get_prompt_parts(
+        &self,
+        log_id: &str,
+    ) -> Result<Vec<crate::db::models::LogPromptPart>, sqlx::Error> {
+        sqlx::query_as::<_, crate::db::models::LogPromptPart>(
+            "SELECT log_id, kind, items, tokens, est_tokens FROM log_prompt_parts \
+             WHERE log_id = ? ORDER BY tokens DESC",
+        )
+        .bind(log_id)
+        .fetch_all(&self.pool)
+        .await
+    }
+
+    pub async fn get_log_attempts(
+        &self,
+        log_id: &str,
+    ) -> Result<Vec<crate::db::models::LogAttempt>, sqlx::Error> {
+        sqlx::query_as::<_, crate::db::models::LogAttempt>(
+            "SELECT log_id, seq, channel_id, channel_name, upstream_model, status_code, outcome, \
+             error_message, duration_ms, ttft_ms, is_final, created_at \
+             FROM log_attempts WHERE log_id = ? ORDER BY seq ASC",
+        )
+        .bind(log_id)
+        .fetch_all(&self.pool)
+        .await
+    }
+
+    /// 近 N 小时按分类聚合的 token 构成（仪表盘「上下文构成」图数据源）。
+    pub async fn get_prompt_part_stats(
+        &self,
+        hours: i64,
+    ) -> Result<Vec<(String, i64)>, sqlx::Error> {
+        let since = (chrono::Utc::now() - chrono::Duration::hours(hours))
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string();
+        let rows = sqlx::query(
+            "SELECT p.kind, COALESCE(SUM(p.tokens), 0) AS tokens \
+             FROM log_prompt_parts p JOIN request_logs l ON l.id = p.log_id \
+             WHERE l.created_at >= ? \
+             GROUP BY p.kind ORDER BY tokens DESC",
+        )
+        .bind(since)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.get::<String, _>("kind"), row.get::<i64, _>("tokens")))
+            .collect())
+    }
+
+    /// 按渠道聚合近 N 小时的路由图边数据：请求量 + 平均首字耗时。
+    /// channel_name 取最近一条日志的名称（渠道改名后仍可读）。
+    pub async fn get_route_flow(&self, hours: i64) -> Result<Vec<RouteFlowRow>, sqlx::Error> {
+        let since = (chrono::Utc::now() - chrono::Duration::hours(hours))
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string();
+        let rows = sqlx::query(
+            "SELECT COALESCE(channel_id, '') AS channel_id, \
+             COALESCE(MAX(channel_name), '') AS channel_name, \
+             COALESCE(SUM(total_tokens), 0) AS total_tokens, \
+             COALESCE(SUM(request_count), 0) AS request_count, \
+             CAST(COALESCE(SUM(ttft_sum), 0) AS REAL) / NULLIF(SUM(ttft_count), 0) AS avg_ttft_ms, \
+             COALESCE(SUM(fail_count), 0) AS fail_count, \
+             MAX(last_at) AS last_at \
+             FROM ( \
+               SELECT channel_id, channel_name, total_tokens, request_count, fail_count, \
+                      0 AS ttft_sum, 0 AS ttft_count, '' AS last_at \
+               FROM usage_stats WHERE hour >= ? AND channel_id != '' \
+               UNION ALL \
+               SELECT channel_id, MAX(channel_name) AS channel_name, 0 AS total_tokens, 0 AS request_count, 0 AS fail_count, \
+                      COALESCE(SUM(ttft_ms), 0) AS ttft_sum, \
+                      COALESCE(SUM(ttft_ms IS NOT NULL), 0) AS ttft_count, \
+                      MAX(created_at) AS last_at \
+               FROM request_logs WHERE created_at >= ? AND channel_id IS NOT NULL AND channel_id != '' \
+               GROUP BY channel_id \
+             ) GROUP BY channel_id ORDER BY request_count DESC",
+        )
+        .bind(&since)
+        .bind(&since)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| RouteFlowRow {
+                channel_id: row.get("channel_id"),
+                channel_name: row.get("channel_name"),
+                total_tokens: row.get("total_tokens"),
+                request_count: row.get("request_count"),
+                avg_ttft_ms: row.get::<Option<f64>, _>("avg_ttft_ms").unwrap_or_default(),
+                fail_count: row.get("fail_count"),
+                last_at: row.get("last_at"),
+            })
+            .collect())
+    }
+}
+
+/// 路由图渠道侧边数据（近 N 小时聚合）。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RouteFlowRow {
+    pub channel_id: String,
+    pub channel_name: String,
+    pub total_tokens: i64,
+    pub request_count: i64,
+    pub avg_ttft_ms: f64,
+    pub fail_count: i64,
+    pub last_at: String,
+}
+
+impl Repository {
     /// Responses 逐帧持久化：追加一帧下游 SSE 字节（best-effort，失败仅告警）。
     pub async fn append_stream_frame(
         &self,
@@ -2081,6 +2249,14 @@ impl Repository {
             .bind(before_date)
             .execute(&self.pool)
             .await?;
+        sqlx::query("DELETE FROM log_prompt_parts WHERE log_id IN (SELECT id FROM request_logs WHERE created_at < ?)")
+            .bind(before_date)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM log_attempts WHERE log_id IN (SELECT id FROM request_logs WHERE created_at < ?)")
+            .bind(before_date)
+            .execute(&self.pool)
+            .await?;
         let result = sqlx::query("DELETE FROM request_logs WHERE created_at < ?")
             .bind(before_date)
             .execute(&self.pool)
@@ -2093,6 +2269,12 @@ impl Repository {
             .execute(&self.pool)
             .await?;
         sqlx::query("DELETE FROM stream_segments")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM log_prompt_parts")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM log_attempts")
             .execute(&self.pool)
             .await?;
         let result = sqlx::query("DELETE FROM request_logs")
@@ -2128,10 +2310,12 @@ impl Repository {
             return Ok((matched_logs, matched_stats));
         }
 
-        // 级联删除子表(与 delete_logs_before 一致):findings + stream_segments。
+        // 级联删除子表(与 delete_logs_before 一致):findings + stream_segments + 048 明细表。
         let mut tx = self.pool.begin().await?;
         let child_sql = format!("DELETE FROM request_security_findings WHERE log_id IN (SELECT id FROM request_logs WHERE {log_where})");
         let child_sql2 = format!("DELETE FROM stream_segments WHERE log_id IN (SELECT id FROM request_logs WHERE {log_where})");
+        let child_sql3 = format!("DELETE FROM log_prompt_parts WHERE log_id IN (SELECT id FROM request_logs WHERE {log_where})");
+        let child_sql4 = format!("DELETE FROM log_attempts WHERE log_id IN (SELECT id FROM request_logs WHERE {log_where})");
         let mut q1 = sqlx::query(&child_sql);
         for b in &log_bind {
             q1 = q1.bind(b);
@@ -2142,6 +2326,16 @@ impl Repository {
             q2 = q2.bind(b);
         }
         q2.execute(&mut *tx).await?;
+        let mut q3 = sqlx::query(&child_sql3);
+        for b in &log_bind {
+            q3 = q3.bind(b);
+        }
+        q3.execute(&mut *tx).await?;
+        let mut q4 = sqlx::query(&child_sql4);
+        for b in &log_bind {
+            q4 = q4.bind(b);
+        }
+        q4.execute(&mut *tx).await?;
 
         let log_sql = format!("DELETE FROM request_logs WHERE {log_where}");
         let mut ql = sqlx::query(&log_sql);
@@ -2324,6 +2518,14 @@ impl Repository {
             .bind(id)
             .execute(&self.pool)
             .await?;
+        sqlx::query("DELETE FROM log_prompt_parts WHERE log_id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM log_attempts WHERE log_id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
         sqlx::query("DELETE FROM request_logs WHERE id = ?")
             .bind(id)
             .execute(&self.pool)
@@ -2372,6 +2574,7 @@ impl Repository {
              sanitized, blocked_reason, trace_id, reasoning_effort, downstream_protocol, downstream_endpoint, \
              route_group, upstream_protocol, upstream_endpoint, provider, codec_version, failure_class, \
              identity_revision, client_cancelled, stream_committed, upstream_type, client_name, \
+             ttft_ms, attempts, \
              COALESCE(detail_level, 'detailed') AS detail_level, started_at, \
              COALESCE(length(CAST(request_body AS BLOB)), 0) AS request_body_bytes, \
              COALESCE(length(CAST(response_choices AS BLOB)), 0) AS response_choices_bytes, \
@@ -2659,6 +2862,24 @@ impl Repository {
             }
         };
 
+        // 今日平均首字耗时（迁移 048）：今日日志中 ttft_ms 非空行的均值。
+        // usage_stats 不含 ttft，直接从 request_logs 聚合（与延迟口径独立）。
+        let avg_ttft_ms: f64 = {
+            let (sum, cnt): (i64, i64) = sqlx::query_as(
+                "SELECT COALESCE(SUM(ttft_ms), 0), COUNT(*) FROM request_logs \
+                 WHERE ttft_ms IS NOT NULL AND created_at LIKE ?",
+            )
+            .bind(&today_prefix)
+            .fetch_one(&self.pool)
+            .await
+            .unwrap_or((0, 0));
+            if cnt > 0 {
+                sum as f64 / cnt as f64
+            } else {
+                0.0
+            }
+        };
+
         // 服务可用率的健康口径（渠道健康度设计 v2）：
         // - 分母 = 启用渠道（status=1）；主动禁用的渠道不计入，避免"用户下线"拉低可用率
         // - 分子 = 启用且健康：last_probe_ok=1（探测通过）或 NULL（从未探测视为可用）
@@ -2743,6 +2964,7 @@ impl Repository {
             total_kb_chunks,
             total_wiki_projects,
             total_wiki_pages,
+            avg_ttft_ms,
         })
     }
 
@@ -2802,6 +3024,28 @@ impl Repository {
             ORDER BY total_tokens DESC
         "#;
         sqlx::query_as::<_, ModelStats>(sql)
+            .fetch_all(&self.pool)
+            .await
+    }
+
+    /// 按天粒度聚合 token 消耗（热力图数据源）。读 usage_stats 小时桶，
+    /// hour 前缀即日期；返回按天升序。
+    pub async fn get_daily_token_stats(&self, days: i64) -> Result<Vec<DailyTokenPoint>, sqlx::Error> {
+        let since = (chrono::Utc::now() - chrono::Duration::days(days))
+            .format("%Y-%m-%d")
+            .to_string();
+        let sql = r#"
+            SELECT
+                substr(hour, 1, 10) AS day,
+                COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                COALESCE(SUM(request_count), 0) AS request_count
+            FROM usage_stats
+            WHERE hour >= ?
+            GROUP BY day
+            ORDER BY day ASC
+        "#;
+        sqlx::query_as::<_, DailyTokenPoint>(sql)
+            .bind(&since)
             .fetch_all(&self.pool)
             .await
     }

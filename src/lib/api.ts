@@ -4,6 +4,7 @@ import type {
   ChannelKey,
   ApiKey, CreateApiKeyInput, ApiKeyStats,
   RequestLog, LogStats, SecurityFinding,
+  LogPromptPart, LogAttempt, PromptPartStat, RouteFlow, DailyTokenPoint,
   DashboardStats,
   ModelStats,
   TokenTrendPoint,
@@ -126,6 +127,10 @@ export const logApi = {
   getSecurityFindings: (logId: string) => invoke<SecurityFinding[]>("get_log_security_findings", { logId }),
   /** 流式请求的已生成内容段（detailed 策略下落库；按 seq 升序拼接即完整内容）。 */
   getStreamSegments: (logId: string) => invoke<Array<{ seq: number; content: string }>>("get_log_stream_segments", { logId }),
+  /** 单条日志的按消息分类 token 拆分（迁移 048，上下文构成卡片）。 */
+  getPromptParts: (logId: string) => invoke<LogPromptPart[]>("get_log_prompt_parts", { logId }),
+  /** 单条日志的上游尝试明细（迁移 048，failover 时间线）。 */
+  getAttempts: (logId: string) => invoke<LogAttempt[]>("get_log_attempts", { logId }),
   getStats: (days?: number) => invoke<LogStats[]>("get_log_stats", { days }),
   delete: (id: string) => invoke<void>("delete_log", { id }),
   deleteBefore: (beforeDate: string) => invoke<number>("delete_logs_before", { beforeDate }),
@@ -234,6 +239,12 @@ export const statsApi = {
   getDashboard: () => invoke<DashboardStats>("get_dashboard_stats"),
   getModelStats: () => invoke<ModelStats[]>("get_model_stats"),
   getTokenTrend: (hours?: number) => invoke<TokenTrendPoint[]>("get_token_trend", { hours: hours ?? 24 }),
+  /** 近 N 小时按消息分类聚合的 token 构成（迁移 048）。 */
+  getPromptPartStats: (hours?: number) => invoke<PromptPartStat[]>("get_prompt_part_stats", { hours: hours ?? 24 }),
+  /** 路由图渠道侧流量数据（迁移 048）。 */
+  getRouteFlow: (hours?: number) => invoke<RouteFlow[]>("get_route_flow", { hours: hours ?? 24 }),
+  /** 每日 token 消耗聚合（热力图数据源，默认近 182 天）。 */
+  getDailyTokenStats: (days?: number) => invoke<DailyTokenPoint[]>("get_daily_token_stats", { days: days ?? 182 }),
 };
 
 // Settings commands

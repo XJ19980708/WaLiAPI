@@ -82,6 +82,8 @@ fn full_log(channel_id: Option<&str>, channel_name: Option<&str>) -> models::Req
         stream_committed: Some(1),
         upstream_type: "channel".into(),
         client_name: Some("test-client".into()),
+        ttft_ms: None,
+        attempts: 0,
     }
 }
 

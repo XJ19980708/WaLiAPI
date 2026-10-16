@@ -691,6 +691,11 @@ pub struct RequestLog {
     /// 调用来源：请求来自哪个下游接入软件（从请求头识别的友好名称，
     /// 迁移 047）。历史行为 NULL，展示为 "-"。
     pub client_name: Option<String>,
+    /// 首字耗时（毫秒，迁移 048）：流式为首个含内容的下游帧到达时刻，
+    /// 非流式为上游响应首包时刻。历史行/失败行为 NULL。
+    pub ttft_ms: Option<i64>,
+    /// 上游物理尝试次数（迁移 048）。>1 表示发生过重试/故障切换。
+    pub attempts: i64,
 }
 
 /// Lightweight row used by the audit-log list. Large request/response bodies
@@ -736,6 +741,10 @@ pub struct RequestLogSummary {
     pub upstream_type: String,
     /// 调用来源（迁移 047）：下游接入软件的友好名称，历史行为 NULL。
     pub client_name: Option<String>,
+    /// 首字耗时（迁移 048）。历史行为 NULL。
+    pub ttft_ms: Option<i64>,
+    /// 上游尝试次数（迁移 048）。历史行为 0。
+    pub attempts: i64,
     pub detail_level: String,
     pub started_at: Option<String>,
     pub request_body_bytes: i64,
@@ -788,6 +797,8 @@ impl Default for RequestLog {
             upstream_type: "channel".into(),
             cached_tokens: 0,
             client_name: None,
+            ttft_ms: None,
+            attempts: 0,
         }
     }
 }
@@ -813,6 +824,8 @@ pub struct DashboardStats {
     pub total_kb_chunks: i64,
     pub total_wiki_projects: i64,
     pub total_wiki_pages: i64,
+    /// 今日平均首字耗时（毫秒，迁移 048）。
+    pub avg_ttft_ms: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -877,6 +890,15 @@ pub struct TokenTrendPoint {
     pub request_count: i64,
 }
 
+/// 单日 token 消耗聚合（热力图数据源，按 UTC 天分桶）。
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct DailyTokenPoint {
+    /// YYYY-MM-DD（UTC 天）
+    pub day: String,
+    pub total_tokens: i64,
+    pub request_count: i64,
+}
+
 /// 单条请求对 `usage_stats` 的累加增量(迁移 046)。由 create_log 漏斗在
 /// 同一事务内 UPSERT,日志清理不触碰此表,统计因此不受审计日志保留期影响。
 #[derive(Debug, Clone)]
@@ -908,6 +930,62 @@ pub struct RequestSecurityFinding {
     pub evidence_hash: Option<String>,
     pub action: Option<String>,
     pub created_at: String,
+}
+
+/// 一次请求的按消息分类 token 拆分（迁移 048）。
+/// kind ∈ system|tools|injected|assistant|tool_result|chat。
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct LogPromptPart {
+    pub log_id: String,
+    pub kind: String,
+    pub items: i64,
+    /// 校准后 token（无上游真实用量时等于 est_tokens）。
+    pub tokens: i64,
+    /// 纯本地估算 token。
+    pub est_tokens: i64,
+}
+
+/// 一次请求的某次上游物理尝试明细（迁移 048）。
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct LogAttempt {
+    pub log_id: String,
+    pub seq: i64,
+    pub channel_id: Option<String>,
+    pub channel_name: Option<String>,
+    pub upstream_model: Option<String>,
+    pub status_code: Option<i64>,
+    pub outcome: Option<String>,
+    pub error_message: Option<String>,
+    pub duration_ms: Option<i64>,
+    pub ttft_ms: Option<i64>,
+    pub is_final: i64,
+    pub created_at: String,
+}
+
+/// 写入用（无自增 id）。
+#[derive(Debug, Clone)]
+pub struct NewLogPromptPart {
+    pub log_id: String,
+    pub kind: String,
+    pub items: i64,
+    pub tokens: i64,
+    pub est_tokens: i64,
+}
+
+/// 写入用（无自增 id）。
+#[derive(Debug, Clone)]
+pub struct NewLogAttempt {
+    pub log_id: String,
+    pub seq: i64,
+    pub channel_id: Option<String>,
+    pub channel_name: Option<String>,
+    pub upstream_model: Option<String>,
+    pub status_code: Option<i64>,
+    pub outcome: Option<String>,
+    pub error_message: Option<String>,
+    pub duration_ms: Option<i64>,
+    pub ttft_ms: Option<i64>,
+    pub is_final: bool,
 }
 
 #[cfg(test)]

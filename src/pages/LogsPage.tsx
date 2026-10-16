@@ -10,9 +10,10 @@ import { contentToString, requestLogSource, responseLogSource } from "../lib/aud
 import { Select, type SelectOption } from "../components/Select";
 import AuditTextPanel from "../components/logs/AuditTextPanel";
 import AuditToolCall from "../components/logs/AuditToolCall";
+import { PromptPartsData, PromptPartsBadges, AttemptsCard, TtftLabel } from "../components/logs/ObservabilityCards";
 import {
   ScrollText, RefreshCw, Trash2, ChevronDown, ChevronRight, AlertCircle,
-  Bot, User, Wrench, Terminal, Eye, FileCode2, Image, ArrowRightLeft, ArrowUp, ArrowDown, ArrowDownLeft, ArrowUpRight, Shield, Timer, Coins,
+  Bot, User, Wrench, Terminal, Eye, FileCode2, ArrowRightLeft, ArrowUp, ArrowDown, ArrowDownLeft, ArrowUpRight, Shield, Timer, Coins, Zap,
   Search, X, Calendar, Key, Server, Box, ShieldAlert, Brain,
 } from "lucide-react";
 
@@ -942,7 +943,12 @@ function LogRow({
             )}
           </div>
         </td>
-        <td className="px-3 py-2.5 text-right text-xs text-muted-foreground align-middle whitespace-nowrap">{formatDuration(log.duration_ms)}</td>
+        <td className="px-3 py-2.5 text-right text-xs text-muted-foreground align-middle whitespace-nowrap">
+          <div className="flex flex-col items-end gap-0.5">
+            <span>{formatDuration(log.duration_ms)}</span>
+            <TtftLabel ttftMs={log.ttft_ms} />
+          </div>
+        </td>
         <td className="px-3 py-2.5">
           <button
             onClick={onDelete}
@@ -1186,7 +1192,15 @@ function LogDetail({ log }: { log: RequestLog }) {
           <div className="mt-1.5 text-sm font-semibold text-slate-900">{formatDuration(log.duration_ms)}</div>
           <div className="mt-0.5 text-[11px] text-slate-400">
             {log.is_stream ? "流式传输" : "非流式"}
+            {log.ttft_ms != null && log.ttft_ms > 0 && (
+              <span className="ml-1 inline-flex items-center gap-0.5 text-amber-600" title="首字耗时">
+                <Zap size={10} /> 首字 {formatDuration(log.ttft_ms)}
+              </span>
+            )}
           </div>
+          {(log.attempts ?? 0) > 1 && (
+            <div className="mt-auto pt-1.5 text-[10px] text-amber-600">共 {log.attempts} 次尝试</div>
+          )}
         </div>
 
         {/* Cost estimate */}
@@ -1240,6 +1254,11 @@ function LogDetail({ log }: { log: RequestLog }) {
           </div>
         </div>
       </div>
+
+      {/* ── 上下文构成：并入「对话构成」徽标行（迁移 048），不再单独展示卡片 ── */}
+
+      {/* ── 调度尝试时间线（迁移 048） ── */}
+      <AttemptsCard logId={log.id} />
 
       {/* ── 简要级别的截断说明 ── */}
       {briefMarker && briefMarker.omitted > 0 && (
@@ -1343,31 +1362,36 @@ function LogDetail({ log }: { log: RequestLog }) {
         </div>
       )}
 
-      {/* ── Conversation composition summary ── */}
+      {/* ── Conversation composition + prompt parts summary ── */}
       {convStats.msgCount > 0 && (
-        <div className="flex min-w-0 items-center gap-2">
-          <Eye size={14} className="text-blue-500" />
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <Eye size={14} className="shrink-0 text-blue-500" />
           <span className="text-xs text-slate-500 shrink-0">对话构成:</span>
-          <div className="flex min-w-0 flex-wrap gap-1.5">
-            {Array.from(convStats.roles.entries()).map(([role, count]) => {
-              const meta = getRoleMeta(role);
-              const Icon = meta.icon;
-              return (
-                <span
-                  key={role}
-                  className={`inline-flex items-center gap-1 rounded-md ${meta.bg} border border-slate-200 px-2 py-0.5 text-[11px] font-medium ${meta.color}`}
-                >
-                  <Icon size={11} />
-                  {meta.label} ×{count}
-                </span>
-              );
-            })}
-            {convStats.hasImage && (
-              <span className="inline-flex items-center gap-1 rounded-md bg-purple-50 border border-purple-200 px-2 py-0.5 text-[11px] font-medium text-purple-700">
-                <Image size={11} /> 含图片
-              </span>
+          <PromptPartsData logId={log.id}>
+            {(parts, calibrated) => (
+              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                {parts.length > 0 ? (
+                  // 分类 token 徽标（含比例条），替代独立的「上下文构成」卡片
+                  <PromptPartsBadges parts={parts} calibrated={calibrated} hasImage={convStats.hasImage} />
+                ) : (
+                  // 分类数据未就绪/为空时退回 role 计数徽标
+                  Array.from(convStats.roles.entries()).map(([role, count]) => {
+                    const meta = getRoleMeta(role);
+                    const Icon = meta.icon;
+                    return (
+                      <span
+                        key={role}
+                        className={`inline-flex items-center gap-1 rounded-md ${meta.bg} border border-slate-200 px-2 py-0.5 text-[11px] font-medium ${meta.color}`}
+                      >
+                        <Icon size={11} />
+                        {meta.label} ×{count}
+                      </span>
+                    );
+                  })
+                )}
+              </div>
             )}
-          </div>
+          </PromptPartsData>
         </div>
       )}
 

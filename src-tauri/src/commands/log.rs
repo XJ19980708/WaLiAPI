@@ -45,6 +45,12 @@ pub struct LogDto {
     pub client_cancelled: Option<bool>,
     pub stream_committed: Option<bool>,
     pub upstream_type: String,
+    /// 调用来源（迁移 047）：下游接入软件的友好名称，识别不出为 null。
+    pub client_name: Option<String>,
+    /// 首字耗时（迁移 048），历史行为 null。
+    pub ttft_ms: Option<i64>,
+    /// 上游尝试次数（迁移 048），历史行为 0。
+    pub attempts: i64,
 }
 
 impl From<RequestLog> for LogDto {
@@ -89,6 +95,9 @@ impl From<RequestLog> for LogDto {
             client_cancelled: l.client_cancelled.map(|v| v == 1),
             stream_committed: l.stream_committed.map(|v| v == 1),
             upstream_type: l.upstream_type,
+            client_name: l.client_name,
+            ttft_ms: l.ttft_ms,
+            attempts: l.attempts,
         }
     }
 }
@@ -149,6 +158,9 @@ impl From<crate::db::models::RequestLogSummary> for LogSummaryDto {
             client_cancelled: s.client_cancelled.map(|v| v == 1),
             stream_committed: s.stream_committed.map(|v| v == 1),
             upstream_type: s.upstream_type,
+            client_name: s.client_name,
+            ttft_ms: s.ttft_ms,
+            attempts: s.attempts,
         };
         Self {
             log,
@@ -558,4 +570,97 @@ pub async fn get_log_stats_impl(
                 })
                 .collect()
         })
+}
+
+// ── 可观测性明细（迁移 048）──
+
+/// 单条日志的按消息分类 token 拆分（上下文构成卡片数据源）。
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PromptPartDto {
+    pub kind: String,
+    pub items: i64,
+    /// 校准后 token（无真实用量时 = est_tokens，前端展示"估算 ≈"）。
+    pub tokens: i64,
+    /// 纯本地估算 token。
+    pub est_tokens: i64,
+    /// tokens 是否已被上游真实用量校准。
+    pub calibrated: bool,
+}
+
+#[tauri::command]
+pub async fn get_log_prompt_parts(
+    log_id: String,
+    state: tauri::State<'_, std::sync::Arc<AppState>>,
+) -> Result<Vec<PromptPartDto>, String> {
+    get_log_prompt_parts_impl(&log_id, &*state).await
+}
+
+pub async fn get_log_prompt_parts_impl(
+    log_id: &str,
+    state: &std::sync::Arc<AppState>,
+) -> Result<Vec<PromptPartDto>, String> {
+    let repo = Repository::new(state.db.pool.clone());
+    let parts = repo
+        .get_prompt_parts(log_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(parts
+        .into_iter()
+        .map(|p| PromptPartDto {
+            calibrated: p.tokens != p.est_tokens,
+            kind: p.kind,
+            items: p.items,
+            tokens: p.tokens,
+            est_tokens: p.est_tokens,
+        })
+        .collect())
+}
+
+/// 单条日志的上游尝试明细（failover 时间线数据源）。
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LogAttemptDto {
+    pub seq: i64,
+    pub channel_id: Option<String>,
+    pub channel_name: Option<String>,
+    pub upstream_model: Option<String>,
+    pub status_code: Option<i64>,
+    pub outcome: Option<String>,
+    pub error_message: Option<String>,
+    pub duration_ms: Option<i64>,
+    pub ttft_ms: Option<i64>,
+    pub is_final: bool,
+}
+
+#[tauri::command]
+pub async fn get_log_attempts(
+    log_id: String,
+    state: tauri::State<'_, std::sync::Arc<AppState>>,
+) -> Result<Vec<LogAttemptDto>, String> {
+    get_log_attempts_impl(&log_id, &*state).await
+}
+
+pub async fn get_log_attempts_impl(
+    log_id: &str,
+    state: &std::sync::Arc<AppState>,
+) -> Result<Vec<LogAttemptDto>, String> {
+    let repo = Repository::new(state.db.pool.clone());
+    let attempts = repo
+        .get_log_attempts(log_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(attempts
+        .into_iter()
+        .map(|a| LogAttemptDto {
+            seq: a.seq,
+            channel_id: a.channel_id,
+            channel_name: a.channel_name,
+            upstream_model: a.upstream_model,
+            status_code: a.status_code,
+            outcome: a.outcome,
+            error_message: a.error_message,
+            duration_ms: a.duration_ms,
+            ttft_ms: a.ttft_ms,
+            is_final: a.is_final == 1,
+        })
+        .collect())
 }

@@ -29,6 +29,7 @@
 pub mod driver;
 pub mod estimate_usage;
 pub mod grok_arguments;
+pub mod prompt_classify;
 pub mod sse;
 
 #[cfg(test)]

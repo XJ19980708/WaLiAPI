@@ -23,6 +23,8 @@ pub struct DashboardStatsDto {
     pub total_kb_chunks: i64,
     pub total_wiki_projects: i64,
     pub total_wiki_pages: i64,
+    /// 今日平均首字耗时（毫秒，迁移 048；无数据为 0）。
+    pub avg_ttft_ms: f64,
 }
 
 #[tauri::command]
@@ -60,6 +62,7 @@ pub async fn get_dashboard_stats_impl(
         total_kb_chunks: s.total_kb_chunks,
         total_wiki_projects: s.total_wiki_projects,
         total_wiki_pages: s.total_wiki_pages,
+        avg_ttft_ms: s.avg_ttft_ms,
     })
 }
 
@@ -145,6 +148,119 @@ pub async fn get_token_trend_impl(
             cached_tokens: p.cached_tokens,
             total_tokens: p.total_tokens,
             request_count: p.request_count,
+        })
+        .collect())
+}
+
+// ── 可观测性扩展（迁移 048）──
+
+/// 近 N 小时按消息分类聚合的 token 构成（仪表盘「上下文构成」图数据源）。
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PromptPartStatDto {
+    pub kind: String,
+    pub tokens: i64,
+}
+
+#[tauri::command]
+pub async fn get_prompt_part_stats(
+    hours: Option<i64>,
+    state: tauri::State<'_, std::sync::Arc<AppState>>,
+) -> Result<Vec<PromptPartStatDto>, String> {
+    get_prompt_part_stats_impl(hours, &*state).await
+}
+
+pub async fn get_prompt_part_stats_impl(
+    hours: Option<i64>,
+    state: &std::sync::Arc<AppState>,
+) -> Result<Vec<PromptPartStatDto>, String> {
+    let repo = Repository::new(state.db.pool.clone());
+    let rows = repo
+        .get_prompt_part_stats(hours.unwrap_or(24))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(rows
+        .into_iter()
+        .map(|(kind, tokens)| PromptPartStatDto { kind, tokens })
+        .collect())
+}
+
+/// 路由图渠道侧流量数据（近 N 小时聚合）。
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RouteFlowDto {
+    pub channel_id: String,
+    pub channel_name: String,
+    pub total_tokens: i64,
+    pub request_count: i64,
+    pub avg_ttft_ms: f64,
+    pub fail_count: i64,
+    pub last_at: String,
+}
+
+#[tauri::command]
+pub async fn get_route_flow(
+    hours: Option<i64>,
+    state: tauri::State<'_, std::sync::Arc<AppState>>,
+) -> Result<Vec<RouteFlowDto>, String> {
+    get_route_flow_impl(hours, &*state).await
+}
+
+pub async fn get_route_flow_impl(
+    hours: Option<i64>,
+    state: &std::sync::Arc<AppState>,
+) -> Result<Vec<RouteFlowDto>, String> {
+    let repo = Repository::new(state.db.pool.clone());
+    let rows = repo
+        .get_route_flow(hours.unwrap_or(24))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(rows
+        .into_iter()
+        .map(|r| RouteFlowDto {
+            channel_id: r.channel_id,
+            channel_name: r.channel_name,
+            total_tokens: r.total_tokens,
+            request_count: r.request_count,
+            avg_ttft_ms: r.avg_ttft_ms,
+            fail_count: r.fail_count,
+            last_at: r.last_at,
+        })
+        .collect())
+}
+
+// ── 每日 token 热力图（GitHub contributions 风格）──
+
+/// 单日 token 消耗（热力图数据源）。
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DailyTokenDto {
+    /// YYYY-MM-DD（UTC 天）
+    pub day: String,
+    pub total_tokens: i64,
+    pub request_count: i64,
+}
+
+#[tauri::command]
+pub async fn get_daily_token_stats(
+    days: Option<i64>,
+    state: tauri::State<'_, std::sync::Arc<AppState>>,
+) -> Result<Vec<DailyTokenDto>, String> {
+    get_daily_token_stats_impl(days, &*state).await
+}
+
+pub async fn get_daily_token_stats_impl(
+    days: Option<i64>,
+    state: &std::sync::Arc<AppState>,
+) -> Result<Vec<DailyTokenDto>, String> {
+    let repo = Repository::new(state.db.pool.clone());
+    let rows = repo
+        .get_daily_token_stats(days.unwrap_or(182))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(rows
+        .into_iter()
+        .map(|r| DailyTokenDto {
+            day: r.day,
+            total_tokens: r.total_tokens,
+            request_count: r.request_count,
         })
         .collect())
 }

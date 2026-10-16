@@ -241,6 +241,35 @@ export interface RequestLog {
   /** 基本日志不提供正文，详细日志可按需加载。 */
   detail_available?: boolean;
   started_at?: string | null;
+  /** 首字耗时（毫秒，迁移 048）；流式为首个含内容的下游帧到达，历史行为 null。 */
+  ttft_ms?: number | null;
+  /** 上游物理尝试次数（迁移 048）；>1 表示发生过重试/故障切换。 */
+  attempts?: number;
+}
+
+/** 单条日志的按消息分类 token 拆分（迁移 048，上下文构成卡片）。 */
+export interface LogPromptPart {
+  kind: "system" | "tools" | "injected" | "assistant" | "tool_result" | "chat" | string;
+  items: number;
+  /** 校准后 token（无真实用量时 = est_tokens）。 */
+  tokens: number;
+  /** 纯本地估算 token。 */
+  est_tokens: number;
+  calibrated: boolean;
+}
+
+/** 单条日志的一次上游物理尝试明细（迁移 048，failover 时间线）。 */
+export interface LogAttempt {
+  seq: number;
+  channel_id: string | null;
+  channel_name: string | null;
+  upstream_model: string | null;
+  status_code: number | null;
+  outcome: string | null;
+  error_message: string | null;
+  duration_ms: number | null;
+  ttft_ms: number | null;
+  is_final: boolean;
 }
 
 // Auth account contracts intentionally expose only renderer-safe account
@@ -457,6 +486,8 @@ export interface DashboardStats {
   total_kb_chunks: number;
   total_wiki_projects: number;
   total_wiki_pages: number;
+  /** 今日平均首字耗时（毫秒，迁移 048；无数据为 0）。 */
+  avg_ttft_ms: number;
 }
 
 export interface ModelStats {
@@ -476,6 +507,30 @@ export interface TokenTrendPoint {
   input_tokens: number;
   output_tokens: number;
   cached_tokens: number;
+  total_tokens: number;
+  request_count: number;
+}
+
+/** 近 N 小时按消息分类聚合的 token 构成（迁移 048）。 */
+export interface PromptPartStat {
+  kind: string;
+  tokens: number;
+}
+
+/** 路由图渠道侧流量数据（近 N 小时聚合，迁移 048）。 */
+export interface RouteFlow {
+  channel_id: string;
+  channel_name: string;
+  total_tokens: number;
+  request_count: number;
+  avg_ttft_ms: number;
+  fail_count: number;
+  last_at: string;
+}
+
+/** 单日 token 消耗聚合（热力图数据源，UTC 天）。 */
+export interface DailyTokenPoint {
+  day: string;
   total_tokens: number;
   request_count: number;
 }

@@ -107,12 +107,17 @@ pub async fn run(cfg: WebServerConfig) -> Result<(), String> {
         )),
         admin_sessions: server::admin_auth::SessionStore::new(),
         login_throttle: server::admin_auth::LoginThrottle::new(),
-        events: server::event_bridge::EventSink::headless(event_tx),
+        events: server::event_bridge::EventSink::headless(event_tx.clone()),
         settings: settings_store::SettingsStore::file(settings_store::default_settings_path(
             &data_dir,
         )),
         data_dir,
     });
+
+    // 注册全局网关事件出口（路由总览页的粒子动画数据源）。
+    server::event_bridge::register_gateway_sink(server::event_bridge::EventSink::headless(
+        event_tx,
+    ));
 
     // Prompt 模板种子（C-07）：空表时写入源码字面量 v1——升级后行为逐字节不变
     if let Err(error) = crate::prompt_templates::seed_if_empty(&state.db.pool).await {

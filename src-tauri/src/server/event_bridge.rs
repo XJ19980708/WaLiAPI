@@ -64,3 +64,19 @@ impl EventSink {
         self.tx.subscribe()
     }
 }
+
+/// 进程级事件出口（可观测性路由图用）：AppState 构建时注册，任何持有
+/// driver 的模块无需穿透 AppState 即可发出网关事件。未注册时静默丢弃。
+static GATEWAY_SINK: std::sync::OnceLock<EventSink> = std::sync::OnceLock::new();
+
+/// 注册全局网关事件出口（应在 AppState 构建后立即调用，重复注册忽略）。
+pub fn register_gateway_sink(sink: EventSink) {
+    let _ = GATEWAY_SINK.set(sink);
+}
+
+/// 发出网关路由事件（best-effort：未注册/无订阅者时静默丢弃）。
+pub fn emit_gateway_event(event: &str, payload: Value) {
+    if let Some(sink) = GATEWAY_SINK.get() {
+        sink.emit(event, payload);
+    }
+}

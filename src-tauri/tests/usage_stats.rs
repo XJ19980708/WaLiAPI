@@ -74,6 +74,8 @@ fn log(
         blocked_reason: None,
         trace_id: None,
         client_name: Some("test-client".into()),
+        ttft_ms: None,
+        attempts: 0,
         reasoning_effort: None,
         downstream_protocol: None,
         downstream_endpoint: None,

@@ -532,6 +532,17 @@ pub(crate) async fn route_plan_response_with_auth_service(
     let query = audited.envelope.query.clone();
     let mode_health_repo = repo.clone();
     let started = Instant::now();
+    // 可观测性 048：请求级日志 id，尝试明细与最终落账行共用。
+    let request_log_id = utils::id::new_id();
+    let attempt_repo = repo.clone();
+    // 路由总览粒子（048）：请求开始事件（入站粒子 Key→网关）。
+    crate::server::event_bridge::emit_gateway_event(
+        "gw_request_start",
+        json!({
+            "api_key_name": key.name,
+            "model": audited.envelope.model,
+        }),
+    );
     let execution = crate::core::plan_executor::execute_plan(
         plan,
         audited,
@@ -542,11 +553,15 @@ pub(crate) async fn route_plan_response_with_auth_service(
             let candidate = lookup.get(&attempt.channel_id).cloned();
             let auth_service = auth_service.clone();
             let mode_health_repo = mode_health_repo.clone();
+            let attempt_repo = attempt_repo.clone();
+            let request_log_id = request_log_id.clone();
             // Clone the attempt so the returned future does not borrow it
             // (execute_plan requires a `'static`-capable executor future).
             let attempt = attempt.clone();
             async move {
-                match candidate {
+                let attempt_started = Instant::now();
+                let attempt_no = attempt.attempt_no as i64;
+                let result = match candidate {
                     Some(RouteCandidate::Channel { channel, identity }) => {
                         let result = dispatch_channel_with_key_failover(
                             endpoint,
@@ -592,7 +607,42 @@ pub(crate) async fn route_plan_response_with_auth_service(
                     None => crate::core::attempt::AttemptResult::Failure(
                         missing_candidate_failure(&attempt.channel_id),
                     ),
+                };
+                // 048：每次物理尝试落明细（best-effort），最终落账行与明细
+                // 共用请求级 id，展开行可完整回放 failover 过程。
+                {
+                    let (status_code, outcome, error_message, is_final) = match &result {
+                        crate::core::attempt::AttemptResult::Success(s) => (
+                            Some(s.status as i64),
+                            Some("success".to_string()),
+                            None,
+                            true,
+                        ),
+                        crate::core::attempt::AttemptResult::Failure(f) => (
+                            local_failure_status(f).or(f.status_code).map(|s| s as i64),
+                            Some(failure_kind(f).to_string()),
+                            Some(f.message.clone()),
+                            false,
+                        ),
+                    };
+                    let row = crate::db::models::NewLogAttempt {
+                        log_id: request_log_id,
+                        seq: attempt_no,
+                        channel_id: Some(attempt.channel_id.clone()),
+                        channel_name: Some(attempt.channel_name.clone()),
+                        upstream_model: Some(attempt.upstream_model.clone()),
+                        status_code,
+                        outcome,
+                        error_message,
+                        duration_ms: Some(attempt_started.elapsed().as_millis() as i64),
+                        ttft_ms: None,
+                        is_final,
+                    };
+                    if let Err(e) = attempt_repo.append_log_attempt(&row).await {
+                        eprintln!("[WARN] append_log_attempt failed: {e}");
+                    }
                 }
+                result
             }
         },
     )
@@ -612,6 +662,7 @@ pub(crate) async fn route_plan_response_with_auth_service(
             duration_ms,
             sanitized_log_body,
             trace_id,
+            Some(&request_log_id),
         )
         .await;
     }
@@ -1105,6 +1156,7 @@ async fn write_non_stream_log(
     duration_ms: u64,
     sanitized_log_body: &str,
     trace_id: Option<String>,
+    preset_log_id: Option<&str>,
 ) {
     let usage = execution.usage.as_ref().map(|u| {
         (
@@ -1142,7 +1194,6 @@ async fn write_non_stream_log(
 
     let is_retry = execution.attempts > 1;
     let last_failure = execution.last_failure.as_ref();
-
     // Extract response_choices from the upstream response body for audit log display.
     let response_choices = if execution.status >= 200 && execution.status < 300 {
         // OpenAI Chat Completions: extract `choices` array
@@ -1197,7 +1248,9 @@ async fn write_non_stream_log(
     }
 
     let log = RequestLog {
-        id: utils::id::new_id(),
+        id: preset_log_id
+            .map(str::to_string)
+            .unwrap_or_else(utils::id::new_id),
         seq: None,
         api_key_id: Some(key.id.clone()),
         api_key_name: Some(key.name.clone()),
@@ -1246,11 +1299,31 @@ async fn write_non_stream_log(
             .clone()
             .unwrap_or_else(|| "channel".to_string()),
         client_name: audited.envelope.client_name.clone(),
+        ttft_ms: execution.ttft_ms.map(|ms| ms as i64),
+        attempts: execution.attempts as i64,
     };
     let log_id = log.id.clone();
     if let Err(e) = repo.create_log(&log).await {
         eprintln!("[WARN] create_log failed: {}", e);
     }
+    write_prompt_parts(
+        repo,
+        &log_id,
+        sanitized_log_body,
+        prompt,
+        total > 0 && prompt > 0,
+    )
+    .await;
+    // 路由总览粒子（048）：请求完成事件。
+    crate::server::event_bridge::emit_gateway_event(
+        "gw_request_done",
+        json!({
+            "api_key_name": log.api_key_name,
+            "channel_name": log.channel_name,
+            "model": log.model,
+            "status": log.status_code,
+        }),
+    );
     if let Err(e) = repo
         .create_security_findings(
             &log_id,
@@ -1361,6 +1434,9 @@ async fn write_stream_precommit_failure_log_with_meta(
             .map(|meta| meta.upstream_type.clone())
             .unwrap_or_else(|| "channel".to_string()),
         client_name: audited.envelope.client_name.clone(),
+        // 预提交失败行无首帧/成功尝试语义，保持默认空值。
+        ttft_ms: None,
+        attempts: 0,
     };
     let log_id = log.id.clone();
     if let Err(e) = repo.create_log(&log).await {
@@ -1435,6 +1511,19 @@ pub(crate) async fn route_stream_plan_with_auth_service(
     let endpoint = plan.endpoint;
     let mut flow = AttemptFlow::new(plan);
     let mut last_attempt_meta: Option<StreamFailureMeta> = None;
+    // 可观测性 048：请求级计时起点（首帧耗时 / 尝试次数相对它计算）。
+    let request_started = Instant::now();
+    // 路由总览粒子（048）：流式请求开始事件。
+    crate::server::event_bridge::emit_gateway_event(
+        "gw_request_start",
+        json!({
+            "api_key_name": key.name,
+            "model": audited.envelope.model,
+        }),
+    );
+    // 请求级日志 id：本次请求的所有尝试明细（成功/失败）与最终落账行共用，
+    // log_attempts 与 request_logs 天然 1:N 关联，无孤儿行。
+    let request_log_id = utils::id::new_id();
 
     loop {
         match flow.next_step() {
@@ -1573,6 +1662,32 @@ pub(crate) async fn route_stream_plan_with_auth_service(
 
                 match dispatched {
                     StreamAttemptResult::Failure(f) => {
+                        // 048：失败尝试落明细（best-effort），与最终落账行共用
+                        // 请求级 id，展开行能看到完整 failover 过程。
+                        {
+                            let failure_row = crate::db::models::NewLogAttempt {
+                                log_id: request_log_id.clone(),
+                                seq: attempt_no as i64,
+                                channel_id: last_attempt_meta
+                                    .as_ref()
+                                    .map(|meta| meta.channel_id.clone()),
+                                channel_name: last_attempt_meta
+                                    .as_ref()
+                                    .map(|meta| meta.channel_name.clone()),
+                                upstream_model: last_attempt_meta
+                                    .as_ref()
+                                    .map(|meta| meta.upstream_model.clone()),
+                                status_code: f.status_code.map(|s| s as i64),
+                                outcome: Some(failure_kind(&f).to_string()),
+                                error_message: Some(f.message.clone()),
+                                duration_ms: Some(request_started.elapsed().as_millis() as i64),
+                                ttft_ms: None,
+                                is_final: false,
+                            };
+                            if let Err(e) = repo.append_log_attempt(&failure_row).await {
+                                eprintln!("[WARN] append_log_attempt failed: {e}");
+                            }
+                        }
                         if let Some(channel_id) = health_channel_id.as_deref() {
                             record_channel_mode_outcome(
                                 repo,
@@ -1783,6 +1898,31 @@ pub(crate) async fn route_stream_plan_with_auth_service(
                         let model = audited.envelope.model.clone();
                         let upstream_model = attempt.upstream_model.clone();
                         let is_retry = attempt_no > 1;
+                        // 048：流式首帧耗时 = 首个有效 SSE 记录验证通过的时刻 -
+                        // 请求开始；尝试次数 = 本请求已执行 attempt_no。
+                        let ttft_ms = request_started.elapsed().as_millis() as i64;
+                        let attempts_total = attempt_no as i64;
+                        // 预生成日志行 id：先记 log_attempts（本次成功尝试），
+                        // 落账行复用同一 id，两者天然关联。
+                        let preset_log_id = request_log_id.clone();
+                        {
+                            let attempt_row = crate::db::models::NewLogAttempt {
+                                log_id: preset_log_id.clone(),
+                                seq: attempt_no as i64,
+                                channel_id: Some(attempt.channel_id.clone()),
+                                channel_name: Some(attempt.channel_name.clone()),
+                                upstream_model: Some(attempt.upstream_model.clone()),
+                                status_code: Some(200),
+                                outcome: Some("success".to_string()),
+                                error_message: None,
+                                duration_ms: Some(ttft_ms),
+                                ttft_ms: Some(ttft_ms),
+                                is_final: true,
+                            };
+                            if let Err(e) = repo.append_log_attempt(&attempt_row).await {
+                                eprintln!("[WARN] append_log_attempt failed: {e}");
+                            }
+                        }
 
                         // T09 (design 11.4): the observability context comes from
                         // the SAME PreparedAttempt + ChannelIdentity that produced
@@ -1827,6 +1967,9 @@ pub(crate) async fn route_stream_plan_with_auth_service(
                             upstream_endpoint,
                             upstream_type,
                             timeouts,
+                            Some(ttft_ms),
+                            attempts_total,
+                            preset_log_id,
                         );
                         let mut builder = Response::builder()
                             .status(StatusCode::OK)
@@ -2031,6 +2174,10 @@ struct StreamLogFinalizer {
     upstream_endpoint: String,
     upstream_type: String,
     started: Instant,
+    /// 首帧耗时（048）：流式首个有效 SSE 记录验证通过的时刻减 started。
+    ttft_ms: Option<i64>,
+    /// 本次请求的上游尝试次数（048）。
+    attempts: i64,
     completed: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// 与流泵共享的落账快照（issue #57）：取消路径读取，见 [`StreamSnapshot`]。
     snapshot: std::sync::Arc<std::sync::Mutex<StreamSnapshot>>,
@@ -2123,11 +2270,31 @@ impl StreamLogFinalizer {
             stream_committed: Some(1),
             upstream_type: self.upstream_type.clone(),
             client_name: self.audited.envelope.client_name.clone(),
+            ttft_ms: self.ttft_ms,
+            attempts: self.attempts,
         };
         let log_id = log.id.clone();
         if let Err(e) = self.repo.create_log(&log).await {
             eprintln!("[WARN] create_log failed: {}", e);
         }
+        write_prompt_parts(
+            &self.repo,
+            &log_id,
+            &self.sanitized_log_body,
+            usage_prompt,
+            !client_cancelled && !had_error && usage_prompt > 0,
+        )
+        .await;
+        // 路由总览粒子（048）：流式请求完成事件。
+        crate::server::event_bridge::emit_gateway_event(
+            "gw_request_done",
+            json!({
+                "api_key_name": log.api_key_name,
+                "channel_name": log.channel_name,
+                "model": log.model,
+                "status": log.status_code,
+            }),
+        );
         if let Err(e) = self
             .repo
             .create_security_findings(
@@ -2259,6 +2426,14 @@ fn stream_response_body(
     upstream_endpoint: String,
     upstream_type: String,
     timeouts: StreamTimeouts,
+    // --- 可观测性 048：首帧耗时 + 尝试次数 ---
+    // ttft：流式首个有效 SSE 记录验证通过的时刻减请求开始；
+    // attempts：本请求已执行的上游尝试次数。
+    ttft_ms: Option<i64>,
+    attempts: i64,
+    // 预生成的日志行 id：外部（route_stream_plan）用它先记 log_attempts，
+    // 落账行必须与尝试明细同一个 id。
+    preset_log_id: String,
 ) -> impl futures_util::Stream<Item = Result<bytes::Bytes, std::io::Error>> {
     let mode_for_error = mode.clone();
     let snapshot = std::sync::Arc::new(std::sync::Mutex::new(StreamSnapshot::default()));
@@ -2269,7 +2444,7 @@ fn stream_response_body(
     let resume_frames_enabled = mode_for_error == "responses"
         && crate::audit_log::current_policy().detail_level
             != crate::audit_log::LogDetailLevel::Basic;
-    let resume_log_id = utils::id::new_id();
+    let resume_log_id = preset_log_id;
     let finalizer = StreamLogFinalizer {
         repo: repo.clone(),
         log_id: resume_log_id.clone(),
@@ -2291,6 +2466,8 @@ fn stream_response_body(
         upstream_endpoint,
         upstream_type,
         started: Instant::now(),
+        ttft_ms,
+        attempts,
         completed: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         snapshot: snapshot.clone(),
     };
@@ -2564,6 +2741,36 @@ async fn write_stream_log(
             response_choices,
         )
         .await;
+}
+
+/// 按消息分类的 token 拆分落库（可观测性 048，best-effort）。
+///
+/// 两阶段口径：`calibrated=true`（上游真实 prompt tokens 可用）时 tokens=校准值；
+/// 否则 tokens=est_tokens（纯估算），前端展示为"估算 ≈"。失败仅告警不阻断落账。
+async fn write_prompt_parts(
+    repo: &Arc<Repository>,
+    log_id: &str,
+    sanitized_log_body: &str,
+    real_prompt: i64,
+    calibrated: bool,
+) {
+    let body: serde_json::Value =
+        serde_json::from_str(sanitized_log_body).unwrap_or(serde_json::Value::Null);
+    let breakdown = super::prompt_classify::classify_prompt(&body);
+    let mut rows = if calibrated && real_prompt > 0 {
+        super::prompt_classify::calibrate(&breakdown, real_prompt)
+    } else {
+        super::prompt_classify::calibrate(&breakdown, breakdown.total_est())
+    };
+    for row in rows.iter_mut() {
+        row.log_id = log_id.to_string();
+        if !calibrated {
+            row.tokens = row.est_tokens;
+        }
+    }
+    if let Err(e) = repo.replace_prompt_parts(log_id, &rows).await {
+        eprintln!("[WARN] write_prompt_parts failed: {e}");
+    }
 }
 
 /// 判断这段下游字节里是否已经出现该协议的终止帧。
@@ -2864,6 +3071,9 @@ mod tests {
                 first_frame: Duration::ZERO,
                 idle: Duration::from_millis(50),
             },
+            None,
+            1,
+            "test-log".to_string(),
         );
 
         let mut bytes = Vec::new();
@@ -3310,6 +3520,9 @@ mod tests {
             "responses".to_string(),
             "channel".to_string(),
             StreamTimeouts::default(),
+            Some(120),
+            1,
+            "test-log".to_string(),
         ));
         while let Some(item) = stream.next().await {
             item.unwrap();
@@ -3373,6 +3586,9 @@ mod tests {
             "responses".to_string(),
             "channel".to_string(),
             StreamTimeouts::default(),
+            Some(120),
+            1,
+            "test-log".to_string(),
         ));
         stream.next().await.unwrap().unwrap();
         stream.next().await.unwrap().unwrap();
@@ -3436,6 +3652,9 @@ mod tests {
             "messages".to_string(),
             "channel".to_string(),
             StreamTimeouts::default(),
+            Some(120),
+            1,
+            "test-log".to_string(),
         ));
         while let Some(item) = stream.next().await {
             item.unwrap();
@@ -3547,6 +3766,9 @@ mod tests {
             "messages".to_string(),
             "channel".to_string(),
             StreamTimeouts::default(),
+            Some(120),
+            1,
+            "test-log".to_string(),
         );
 
         let mut bytes = Vec::new();
@@ -3657,6 +3879,7 @@ mod tests {
             response_headers: vec![],
             attempts: 1,
             duration_ms: 5,
+            ttft_ms: None,
             last_failure: None,
         };
         write_non_stream_log(
@@ -3667,6 +3890,7 @@ mod tests {
             &execution,
             5,
             "{}",
+            None,
             None,
         )
         .await;
@@ -3734,6 +3958,9 @@ mod tests {
             "messages".to_string(),
             "channel".to_string(),
             StreamTimeouts::default(),
+            Some(120),
+            1,
+            "test-log".to_string(),
         );
         let mut bytes = Vec::new();
         tokio::pin!(stream);
@@ -3788,6 +4015,9 @@ mod tests {
             "messages".to_string(),
             "channel".to_string(),
             StreamTimeouts::default(),
+            Some(120),
+            1,
+            "test-log".to_string(),
         );
 
         // 上游挂死时若实现退化回「等 EOF」，这里 10s 超时直接失败。
@@ -3854,6 +4084,9 @@ mod tests {
             "messages".to_string(),
             "channel".to_string(),
             StreamTimeouts::default(),
+            Some(120),
+            1,
+            "test-log".to_string(),
         ));
 
         // 消费两帧输出（首帧 + 含 usage 的第二帧），确保快照已更新。
@@ -3913,6 +4146,9 @@ mod tests {
             "messages".to_string(),
             "channel".to_string(),
             StreamTimeouts::default(),
+            Some(120),
+            1,
+            "test-log".to_string(),
         ));
 
         stream.next().await.unwrap().unwrap();
@@ -3972,6 +4208,9 @@ mod tests {
             "messages".to_string(),
             "channel".to_string(),
             timeouts,
+            None,
+            1,
+            "test-log".to_string(),
         );
 
         let mut bytes = Vec::new();

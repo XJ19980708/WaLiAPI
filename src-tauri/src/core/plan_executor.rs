@@ -52,6 +52,9 @@ pub struct PlanExecution {
     /// Total attempts actually executed (1-based for the first).
     pub attempts: usize,
     pub duration_ms: u64,
+    /// 首包耗时（毫秒，可观测性 048）：成功尝试中首个 2xx 响应头到达的时刻
+    /// 减请求开始。非流式路径的价值有限（≈连接+上游处理），但保持字段统一。
+    pub ttft_ms: Option<u64>,
     pub last_failure: Option<AttemptFailure>,
 }
 
@@ -87,6 +90,9 @@ where
     Fut: Future<Output = AttemptResult>,
 {
     let started = Instant::now();
+    // 首包耗时（048）：第一次成功取得 AttemptResult 的时刻（无论成功失败，
+    // 记录"第一次有响应"的耗时；成功路径即最终响应的首包时间）。
+    let mut ttft_ms: Option<u64> = None;
     let mut flow = AttemptFlow::new(plan);
     // `FlowStep::Halt` only carries the terminal status/message. Retain the
     // last selected candidate so an exhausted plan preserves log metadata.
@@ -135,10 +141,14 @@ where
                     Err(failure) => failure,
                     Ok(attempt) => {
                         let upstream_model = attempt.upstream_model.clone();
+                        let attempt_started = Instant::now();
                         match executor(&attempt).await {
                             AttemptResult::Success(mut s) => {
                                 if s.upstream_model.is_none() {
                                     s.upstream_model = Some(upstream_model);
+                                }
+                                if ttft_ms.is_none() {
+                                    ttft_ms = Some(attempt_started.elapsed().as_millis() as u64);
                                 }
                                 return PlanExecution {
                                     status: s.status,
@@ -157,6 +167,7 @@ where
                                     response_headers: s.response_headers,
                                     attempts: attempt_no,
                                     duration_ms: started.elapsed().as_millis() as u64,
+                                    ttft_ms,
                                     last_failure: None,
                                 };
                             }
@@ -227,6 +238,7 @@ where
                         response_headers: vec![],
                         attempts: attempt_no,
                         duration_ms: started.elapsed().as_millis() as u64,
+                        ttft_ms,
                         last_failure: Some(result),
                     };
                 }
@@ -258,6 +270,7 @@ where
                     response_headers: vec![],
                     attempts: flow.attempts_used(),
                     duration_ms: started.elapsed().as_millis() as u64,
+                    ttft_ms,
                     last_failure,
                 };
             }

@@ -550,6 +550,12 @@ async fn dispatch(shared: &SharedState, cmd: &str, args: Value) -> Result<Value,
             to_json(commands::log::get_log_stream_segments(arg(&args, "logId")?, state).await)
         }
         "get_log_stats" => to_json(commands::log::get_log_stats(arg(&args, "days")?, state).await),
+        "get_log_prompt_parts" => {
+            to_json(commands::log::get_log_prompt_parts(arg(&args, "logId")?, state).await)
+        }
+        "get_log_attempts" => {
+            to_json(commands::log::get_log_attempts(arg(&args, "logId")?, state).await)
+        }
         "list_prompt_templates" => {
             to_json(commands::prompt_template::list_prompt_templates(state).await)
         }
@@ -720,6 +726,15 @@ async fn dispatch(shared: &SharedState, cmd: &str, args: Value) -> Result<Value,
         "get_model_stats" => to_json(commands::stats::get_model_stats(state).await),
         "get_token_trend" => {
             to_json(commands::stats::get_token_trend(arg(&args, "hours")?, state).await)
+        }
+        "get_prompt_part_stats" => {
+            to_json(commands::stats::get_prompt_part_stats(arg(&args, "hours")?, state).await)
+        }
+        "get_route_flow" => {
+            to_json(commands::stats::get_route_flow(arg(&args, "hours")?, state).await)
+        }
+        "get_daily_token_stats" => {
+            to_json(commands::stats::get_daily_token_stats(arg(&args, "days")?, state).await)
         }
         "get_settings" => to_json(commands::settings::get_settings(state).await),
         "clear_semantic_cache" => {

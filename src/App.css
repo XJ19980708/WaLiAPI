@@ -317,3 +317,55 @@ textarea:focus {
 @media (min-width: 48rem) {
   .md\:flex { display: flex; }
 }
+/* ── 路由图（RouteMapCard）动画 ─────────────────────────────── */
+
+/* 静态连线：虚线缓慢流动，暗示「链路是活的」 */
+.route-map-wire {
+  animation: route-wire-flow 1.6s linear infinite;
+}
+@keyframes route-wire-flow {
+  to {
+    stroke-dashoffset: -20;
+  }
+}
+
+/* 高亮连线（调用发生时点亮）：虚线快速流动，视觉上「数据正在跑」 */
+.route-map-wire-active {
+  animation: route-wire-flow-active 0.55s linear infinite;
+}
+@keyframes route-wire-flow-active {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+
+/* 完成脉冲：终点光环扩散一次后淡出 */
+.route-map-pulse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: route-pulse 0.6s ease-out forwards;
+}
+@keyframes route-pulse {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+}
+
+/* 网关 hub 呼吸光晕 */
+.route-map-hub-glow {
+  animation: route-hub-glow 2.4s ease-in-out infinite;
+}
+@keyframes route-hub-glow {
+  0%,
+  100% {
+    box-shadow: 0 8px 24px rgba(47, 111, 237, 0.12);
+  }
+  50% {
+    box-shadow: 0 8px 32px rgba(47, 111, 237, 0.28);
+  }
+}

@@ -1,7 +1,9 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { statsApi } from "../lib/api";
-import type { DashboardStats, ModelStats, TokenTrendPoint } from "../types";
+import type { DashboardStats, ModelStats, TokenTrendPoint, PromptPartStat } from "../types";
+import { RouteMapCard } from "../components/RouteMapCard";
+import { TokenHeatmap } from "../components/TokenHeatmap";
 import { formatNumber, formatDuration } from "../lib/constants";
 import {
   Activity,
@@ -32,6 +34,7 @@ export function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [modelStats, setModelStats] = useState<ModelStats[]>([]);
   const [tokenTrend, setTokenTrend] = useState<TokenTrendPoint[]>([]);
+  const [partStats, setPartStats] = useState<PromptPartStat[]>([]);
   const [trendHours, setTrendHours] = useState<24 | 168 | 720>(24);
   const [showInputToken, setShowInputToken] = useState(true);
   const [showOutputToken, setShowOutputToken] = useState(true);
@@ -62,6 +65,14 @@ export function DashboardPage() {
     return () => clearInterval(interval);
   }, [trendHours]);
 
+  // 上下文构成（迁移 048）：近 24h 按消息分类的 token 聚合，与趋势图同节奏刷新。
+  useEffect(() => {
+    const doLoad = () => statsApi.getPromptPartStats(24).then(setPartStats).catch(() => {});
+    doLoad();
+    const interval = setInterval(doLoad, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
   if (loadError && !stats) {
     return (
       <div className="page-shell flex flex-col items-center justify-center gap-3 text-sm text-slate-500">
@@ -89,17 +100,9 @@ export function DashboardPage() {
     { label: "今日请求", value: formatNumber(stats.today_requests), icon: Activity, color: "text-blue-600", tone: "bg-blue-50" },
     { label: "今日 Token", value: formatNumber(stats.today_total_tokens), icon: Zap, color: "text-amber-600", tone: "bg-amber-50" },
     { label: "今日缓存命中", value: cacheRate(stats.today_cached_tokens, stats.today_prompt_tokens), sub: `节省 ${formatNumber(stats.today_cached_tokens)} tokens`, icon: DatabaseZap, color: "text-emerald-600", tone: "bg-emerald-50" },
-    { label: "累计请求", value: formatNumber(stats.total_requests), icon: TrendingUp, color: "text-indigo-600", tone: "bg-indigo-50" },
-    { label: "累计 Token", value: formatNumber(stats.total_tokens), icon: Zap, color: "text-orange-600", tone: "bg-orange-50" },
+    { label: "平均延迟", value: formatDuration(Math.round(stats.avg_latency_ms)), sub: stats.avg_ttft_ms > 0 ? `首字 ${formatDuration(Math.round(stats.avg_ttft_ms))}` : undefined, icon: Workflow, color: "text-violet-600", tone: "bg-violet-50" },
     { label: "活跃上游", value: `${activeUpstreams}/${totalUpstreams}`, sub: `渠道 ${stats.active_channels}/${stats.total_channels} · 账号 ${stats.active_auth_accounts}/${stats.total_auth_accounts}`, icon: Radio, color: "text-teal-600", tone: "bg-teal-50" },
-  ];
-  const bottomMetrics = [
-    { label: "平均延迟", value: formatDuration(Math.round(stats.avg_latency_ms)), icon: Workflow, color: "text-violet-600", tone: "bg-violet-50" },
-    { label: "累计缓存命中", value: cacheRate(stats.total_cached_tokens, stats.total_prompt_tokens), sub: `节省 ${formatNumber(stats.total_cached_tokens)} tokens`, icon: DatabaseZap, color: "text-lime-600", tone: "bg-lime-50" },
-    { label: "RAG", value: formatNumber(stats.total_knowledge_bases), icon: Database, color: "text-cyan-600", tone: "bg-cyan-50" },
-    { label: "RAG 文档", value: formatNumber(stats.total_kb_documents), icon: Layers, color: "text-teal-600", tone: "bg-teal-50" },
-    { label: "Wiki", value: formatNumber(stats.total_wiki_projects), icon: Network, color: "text-fuchsia-600", tone: "bg-fuchsia-50" },
-    { label: "Wiki 页面", value: formatNumber(stats.total_wiki_pages), icon: FileText, color: "text-pink-600", tone: "bg-pink-50" },
+    { label: "累计 Token", value: formatNumber(stats.total_tokens), sub: `${formatNumber(stats.total_requests)} 次请求`, icon: TrendingUp, color: "text-indigo-600", tone: "bg-indigo-50" },
   ];
 
   const quickActions = [
@@ -166,7 +169,7 @@ export function DashboardPage() {
         </div>
       </section>
 
-      {/* 指标卡片 — 上排：请求与渠道 */}
+      {/* 指标卡片 — 单排核心指标（延迟/首字/上游/累计合并进来，知识服务降级为尾部小卡） */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
         {topMetrics.map(({ label, value, sub, icon: Icon, color, tone }) => (
           <div key={label} className="surface data-card">
@@ -182,39 +185,46 @@ export function DashboardPage() {
         ))}
       </div>
 
-      {/* 指标卡片 — 下排：知识服务 */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
-        {bottomMetrics.map(({ label, value, sub, icon: Icon, color, tone }) => (
-          <div key={label} className="surface data-card">
-            <div className="flex items-center justify-between">
-              <div className={`rounded-xl ${tone} p-2`}>
-                <Icon className={`h-4 w-4 ${color}`} />
-              </div>
-            </div>
-            <div className="mt-3 text-2xl font-semibold tracking-tight text-slate-900">{value}</div>
-            <div className="text-xs text-slate-500">{label}</div>
-            {sub && <div className="mt-0.5 text-[11px] text-slate-400">{sub}</div>}
-          </div>
-        ))}
+      {/* 知识服务一行小卡（从指标区降级，弱化视觉重量） */}
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-2xl border border-slate-200 bg-white/60 px-5 py-3 text-xs text-slate-500">
+        <span className="flex items-center gap-1.5 font-medium text-slate-600">
+          <Database className="h-3.5 w-3.5 text-cyan-500" /> 知识服务
+        </span>
+        <span>RAG <b className="font-semibold text-slate-700">{stats.total_knowledge_bases}</b> 库 · {stats.total_kb_documents} 文档 · {stats.total_kb_chunks} 切片</span>
+        <span>Wiki <b className="font-semibold text-slate-700">{stats.total_wiki_projects}</b> 项目 · {stats.total_wiki_pages} 页面</span>
+        <span>缓存命中 <b className="font-semibold text-slate-700">{cacheRate(stats.total_cached_tokens, stats.total_prompt_tokens)}</b>（累计节省 {formatNumber(stats.total_cached_tokens)} tokens）</span>
       </div>
 
-      {/* 模型分布表格 */}
+      {/* 网关路由动态图（调用方 → 网关 → 渠道，可观测性 P4） */}
+      <RouteMapCard />
+
+      {/* Token 趋势（左）+ Token 热力图（右）：宽屏左右分栏（1:1），窄屏纵向堆叠 */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <div className="min-w-0">
+          <TokenTrendChart
+            data={tokenTrend}
+            hours={trendHours}
+            showInput={showInputToken}
+            showOutput={showOutputToken}
+            showCached={showCachedToken}
+            onHoursChange={setTrendHours}
+            onToggleInput={() => setShowInputToken(v => !v)}
+            onToggleOutput={() => setShowOutputToken(v => !v)}
+            onToggleCached={() => setShowCachedToken(v => !v)}
+            hoverBar={hoverBar}
+            setHoverBar={setHoverBar}
+          />
+        </div>
+        <div className="min-w-0">
+          <TokenHeatmap />
+        </div>
+      </div>
+
+      {/* 模型分布（通栏紧凑列表） */}
       <ModelDistributionTable data={modelStats} />
 
-      {/* Token 使用趋势图 */}
-      <TokenTrendChart
-        data={tokenTrend}
-        hours={trendHours}
-        showInput={showInputToken}
-        showOutput={showOutputToken}
-        showCached={showCachedToken}
-        onHoursChange={setTrendHours}
-        onToggleInput={() => setShowInputToken(v => !v)}
-        onToggleOutput={() => setShowOutputToken(v => !v)}
-        onToggleCached={() => setShowCachedToken(v => !v)}
-        hoverBar={hoverBar}
-        setHoverBar={setHoverBar}
-      />
+      {/* 上下文构成（近 24h 按消息分类的 token 聚合，紧凑单行） */}
+      <PromptPartComposition data={partStats} />
 
       {/* 运维建议 */}
       <section className="surface rounded-[20px] p-6">
@@ -263,24 +273,13 @@ export function DashboardPage() {
           </div>
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
             <div className="flex items-center gap-2">
-              <Database className="h-4 w-4 text-cyan-600" />
-              <span className="text-sm font-medium text-slate-900">RAG</span>
-            </div>
-            <p className="mt-1.5 text-sm text-slate-500">
-              {stats.total_knowledge_bases > 0
-                ? `${stats.total_knowledge_bases} 个 RAG · ${stats.total_kb_documents} 篇文档 · ${stats.total_kb_chunks} 个切片`
-                : "尚未创建 RAG，点击上方「创建 RAG」开始。"}
-            </p>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <div className="flex items-center gap-2">
               <Network className="h-4 w-4 text-fuchsia-600" />
-              <span className="text-sm font-medium text-slate-900">Wiki 知识库</span>
+              <span className="text-sm font-medium text-slate-900">知识服务</span>
             </div>
             <p className="mt-1.5 text-sm text-slate-500">
-              {stats.total_wiki_projects > 0
-                ? `${stats.total_wiki_projects} 个 Wiki · ${stats.total_wiki_pages} 个页面`
-                : "尚未创建 Wiki，前往知识库页面创建。"}
+              {stats.total_knowledge_bases > 0 || stats.total_wiki_projects > 0
+                ? `${stats.total_knowledge_bases} 个 RAG · ${stats.total_wiki_projects} 个 Wiki，向量与投影正常运行。`
+                : "尚未创建 RAG / Wiki，点击上方「创建 RAG」开始。"}
             </p>
           </div>
         </div>
@@ -435,6 +434,63 @@ export function DashboardPage() {
 }
 
 // ════════════════════════════════════════════════════════════
+// 上下文构成（近 24h 按消息分类的 token 聚合，迁移 048）
+// ════════════════════════════════════════════════════════════
+
+// 与 src/components/logs/ObservabilityCards.tsx 的 PROMPT_PART_META 保持一致。
+const PART_META: Record<string, { label: string; bar: string; text: string }> = {
+  system:      { label: "系统提示词", bar: "bg-slate-400",   text: "text-slate-600" },
+  tools:       { label: "工具定义",   bar: "bg-purple-400", text: "text-purple-600" },
+  injected:    { label: "注入内容",   bar: "bg-amber-400",  text: "text-amber-600" },
+  assistant:   { label: "助手消息",   bar: "bg-emerald-400", text: "text-emerald-600" },
+  tool_result: { label: "工具结果",   bar: "bg-blue-400",   text: "text-blue-600" },
+  chat:        { label: "用户消息",   bar: "bg-sky-400",    text: "text-sky-600" },
+};
+
+function PromptPartComposition({ data }: { data: PromptPartStat[] }) {
+  const nonZero = data.filter(d => d.tokens > 0);
+  if (nonZero.length === 0) return null;
+  const total = nonZero.reduce((sum, d) => sum + d.tokens, 0);
+  return (
+    <section className="surface rounded-[24px] p-6">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold text-slate-900">上下文构成</h2>
+        <span className="text-xs text-slate-400">近 24 小时 · 共 {formatNumber(total)} tokens</span>
+      </div>
+      {/* 单行紧凑布局：比例条与图例同行，减少纵向空间 */}
+      <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2">
+        <div className="flex h-2.5 min-w-[120px] flex-1 overflow-hidden rounded-full bg-slate-100">
+          {nonZero.map(d => {
+            const meta = PART_META[d.kind] || { label: d.kind, bar: "bg-slate-300", text: "text-slate-500" };
+            return (
+              <div
+                key={d.kind}
+                className={meta.bar}
+                style={{ width: `${(d.tokens / total) * 100}%` }}
+                title={`${meta.label}: ${formatNumber(d.tokens)} (${Math.round((d.tokens / total) * 100)}%)`}
+              />
+            );
+          })}
+        </div>
+        <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+          {nonZero.map(d => {
+            const meta = PART_META[d.kind] || { label: d.kind, bar: "bg-slate-300", text: "text-slate-500" };
+            return (
+              <div key={d.kind} className="flex items-center gap-1.5 text-[11px]">
+                <span className={`h-2 w-2 rounded-sm ${meta.bar}`} />
+                <span className={`font-medium ${meta.text}`}>{meta.label}</span>
+                <span className="tabular-nums text-slate-500">{formatNumber(d.tokens)}</span>
+                <span className="tabular-nums text-slate-400">{Math.round((d.tokens / total) * 100)}%</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
 // 模型分布表格
 // ════════════════════════════════════════════════════════════
 
@@ -453,11 +509,11 @@ function ModelDistributionTable({ data }: { data: ModelStats[] }) {
   const canExpand = data.length > COLLAPSED_ROWS;
 
   return (
-    <section className="surface rounded-[20px] p-6">
+    <section className="surface h-full rounded-[20px] p-6">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold text-slate-900">模型分布</h2>
-          <p className="mt-1 text-sm text-slate-500">各模型调用次数、Token 消耗、缓存命中与成功率</p>
+          <p className="mt-1 text-sm text-slate-500">Token 消耗与成功率（按模型）</p>
         </div>
         <Layers className="h-5 w-5 text-slate-400" />
       </div>
@@ -467,68 +523,53 @@ function ModelDistributionTable({ data }: { data: ModelStats[] }) {
           暂无调用记录
         </div>
       ) : (
-        <div className="mt-5 overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 text-left text-xs text-slate-500">
-                <th className="pb-2 pr-4 font-medium">模型</th>
-                <th className="pb-2 pr-4 font-medium text-right">请求数</th>
-                <th className="pb-2 pr-4 font-medium text-right">输入 Token</th>
-                <th className="pb-2 pr-4 font-medium text-right">输出 Token</th>
-                <th className="pb-2 pr-4 font-medium text-right">缓存命中</th>
-                <th className="pb-2 pr-4 font-medium text-right">总 Token</th>
-                <th className="pb-2 pr-4 font-medium">Token 占比</th>
-                <th className="pb-2 pr-4 font-medium text-right">成功率</th>
-                <th className="pb-2 font-medium text-right">平均延迟</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visible.map((row, i) => (
-                <tr key={row.model} className="border-b border-slate-100 last:border-0">
-                  <td className="py-2.5 pr-4">
-                    <div className="flex items-center gap-2">
-                      <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${MODEL_COLORS[i % MODEL_COLORS.length]}`} />
-                      <span className="font-medium text-slate-900">{row.model}</span>
-                    </div>
-                  </td>
-                  <td className="py-2.5 pr-4 text-right tabular-nums text-slate-600">{formatNumber(row.request_count)}</td>
-                  <td className="py-2.5 pr-4 text-right tabular-nums text-slate-500">{formatNumber(row.input_tokens)}</td>
-                  <td className="py-2.5 pr-4 text-right tabular-nums text-slate-500">{formatNumber(row.output_tokens)}</td>
-                  <td className="py-2.5 pr-4 text-right tabular-nums">
-                    {(row.cached_tokens ?? 0) > 0 ? (
-                      <div>
-                        <div className="font-medium text-emerald-600">{formatNumber(row.cached_tokens)}</div>
-                        <div className="text-[10px] text-slate-400">
-                          {row.input_tokens > 0 ? `${((row.cached_tokens / row.input_tokens) * 100).toFixed(1)}%` : "-"}
-                        </div>
-                      </div>
-                    ) : (
-                      <span className="text-slate-300">-</span>
-                    )}
-                  </td>
-                  <td className="py-2.5 pr-4 text-right tabular-nums font-medium text-slate-900">{formatNumber(row.total_tokens)}</td>
-                  <td className="py-2.5 pr-4">
-                    <div className="h-1.5 w-full rounded-full bg-slate-100">
-                      <div
-                        className={`h-1.5 rounded-full ${MODEL_COLORS[i % MODEL_COLORS.length]}`}
-                        style={{ width: `${(row.total_tokens / maxTokens) * 100}%` }}
-                      />
-                    </div>
-                  </td>
-                  <td className="py-2.5 pr-4 text-right tabular-nums">
-                    <span className={row.success_rate >= 0.95 ? "text-emerald-600" : row.success_rate >= 0.8 ? "text-amber-600" : "text-rose-600"}>
-                      {(row.success_rate * 100).toFixed(1)}%
+        <div className="mt-5 space-y-3.5">
+          {visible.map((row, i) => {
+            const share = maxTokens > 0 ? (row.total_tokens / maxTokens) * 100 : 0;
+            const cached = row.cached_tokens ?? 0;
+            const successRate = row.success_rate * 100;
+            return (
+              <div key={row.model}>
+                <div className="flex items-center gap-2 text-sm">
+                  <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${MODEL_COLORS[i % MODEL_COLORS.length]}`} />
+                  <span className="min-w-0 flex-1 truncate font-medium text-slate-900" title={row.model}>{row.model}</span>
+                  <span className="shrink-0 text-xs tabular-nums text-slate-400">{formatNumber(row.request_count)} 次</span>
+                  <span className="w-20 shrink-0 text-right font-semibold tabular-nums text-slate-800">
+                    {formatNumber(row.total_tokens)}
+                  </span>
+                </div>
+                {/* token 占比条 + 缓存命中 + 成功率（同行紧凑排） */}
+                <div className="mt-1.5 ml-4 flex items-center gap-2.5">
+                  <div className="h-1.5 min-w-[40px] flex-1 overflow-hidden rounded-full bg-slate-100">
+                    <div
+                      className={`h-full rounded-full ${MODEL_COLORS[i % MODEL_COLORS.length]}`}
+                      style={{ width: `${share}%` }}
+                    />
+                  </div>
+                  <span className="w-9 shrink-0 text-right text-[10px] tabular-nums text-slate-400">
+                    {Math.round(share)}%
+                  </span>
+                  {cached > 0 && (
+                    <span className="shrink-0 text-[10px] tabular-nums text-emerald-600" title="缓存命中（占输入）">
+                      ⚡{row.input_tokens > 0 ? `${((cached / row.input_tokens) * 100).toFixed(0)}%` : formatNumber(cached)}
                     </span>
-                  </td>
-                  <td className="py-2.5 text-right tabular-nums text-slate-500">{formatDuration(Math.round(row.avg_latency_ms))}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  )}
+                  <span
+                    className={`w-12 shrink-0 text-right text-[11px] tabular-nums ${
+                      successRate >= 95 ? "text-emerald-600" : successRate >= 80 ? "text-amber-600" : "text-rose-600"
+                    }`}
+                    title="成功率"
+                  >
+                    {successRate.toFixed(1)}%
+                  </span>
+                </div>
+              </div>
+            );
+          })}
 
           {/* 展开/收起按钮:模块底部居中,淡色边框 hover 强调色(主题审美) */}
           {canExpand && (
-            <div className="mt-4 flex justify-center">
+            <div className="flex justify-center pt-1">
               <button
                 onClick={() => setExpanded(e => !e)}
                 className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-4 py-1.5 text-xs font-medium text-slate-500 transition-all hover:border-blue-400 hover:text-blue-600"
@@ -760,6 +801,7 @@ function TokenTrendChart({
 
   return (
     <section className="surface rounded-[20px] p-6">
+      {/* 头部：标题 + 日/周/月切换 */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-lg font-semibold text-slate-900">Token 使用趋势</h2>
@@ -767,52 +809,23 @@ function TokenTrendChart({
             {hours === 24 ? "最近 24 小时" : hours === 168 ? "最近 7 天" : "最近 30 天"} · {hours === 24 ? "按小时" : hours === 168 ? "按 3 小时" : "按天"}粒度 · 按模型颜色堆叠
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          {/* 输入/输出多选切换 */}
-          <div className="flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+        {/* 日/周/月切换 */}
+        <div className="flex items-center gap-0.5 rounded-full border border-slate-200 bg-white p-0.5">
+          {([
+            { v: 24, label: "日" },
+            { v: 168, label: "周" },
+            { v: 720, label: "月" },
+          ] as const).map(opt => (
             <button
-              onClick={onToggleInput}
-              className={`rounded-md px-3 py-1 text-xs font-medium transition-all ${
-                showInput ? "bg-white text-slate-900 shadow-sm" : "text-slate-400 hover:text-slate-600"
+              key={opt.v}
+              onClick={() => onHoursChange(opt.v)}
+              className={`whitespace-nowrap rounded-full px-3.5 py-1 text-xs font-medium transition-all ${
+                hours === opt.v ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:text-slate-700"
               }`}
             >
-              输入 Token
+              {opt.label}
             </button>
-            <button
-              onClick={onToggleOutput}
-              className={`rounded-md px-3 py-1 text-xs font-medium transition-all ${
-                showOutput ? "bg-white text-slate-900 shadow-sm" : "text-slate-400 hover:text-slate-600"
-              }`}
-            >
-              输出 Token
-            </button>
-            <button
-              onClick={onToggleCached}
-              className={`rounded-md px-3 py-1 text-xs font-medium transition-all ${
-                showCached ? "bg-white text-slate-900 shadow-sm" : "text-slate-400 hover:text-slate-600"
-              }`}
-            >
-              缓存命中
-            </button>
-          </div>
-          {/* 日/周/月切换 */}
-          <div className="flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
-            {([
-              { v: 24, label: "日" },
-              { v: 168, label: "周" },
-              { v: 720, label: "月" },
-            ] as const).map(opt => (
-              <button
-                key={opt.v}
-                onClick={() => onHoursChange(opt.v)}
-                className={`rounded-md px-3 py-1 text-xs font-medium transition-all ${
-                  hours === opt.v ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
+          ))}
         </div>
       </div>
 
@@ -838,11 +851,6 @@ function TokenTrendChart({
               </button>
             );
           })}
-          <div className="ml-2 flex items-center gap-3 text-[10px] text-slate-400">
-            {showInput && <span className="flex items-center gap-1"><span className="h-0.5 w-4 rounded-full bg-slate-400" />含输入</span>}
-            {showOutput && <span className="flex items-center gap-1"><span className="h-0.5 w-4 rounded-full bg-slate-400" style={{ borderTop: "2px dashed" }} />含输出</span>}
-            {showCached && <span className="flex items-center gap-1"><span className="h-0.5 w-4 rounded-full" style={{ backgroundColor: "#10b981" }} />含缓存</span>}
-          </div>
         </div>
       )}
 
@@ -1045,6 +1053,35 @@ function TokenTrendChart({
             </div>
           </div>
         )}
+      </div>
+
+      {/* 底部工具栏：指标开关（左）+ 区间汇总（右） */}
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3">
+        <div className="flex items-center gap-1.5">
+          {([
+            { label: "输入", dot: "bg-sky-400", active: showInput, onToggle: onToggleInput },
+            { label: "输出", dot: "bg-violet-400", active: showOutput, onToggle: onToggleOutput },
+            { label: "缓存", dot: "bg-emerald-400", active: showCached, onToggle: onToggleCached },
+          ] as const).map(opt => (
+            <button
+              key={opt.label}
+              onClick={opt.onToggle}
+              className={`flex items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1 text-xs font-medium transition-all ${
+                opt.active
+                  ? "border-slate-200 bg-white text-slate-700 shadow-sm"
+                  : "border-transparent bg-transparent text-slate-300 hover:text-slate-500"
+              }`}
+            >
+              <span className={`h-2 w-2 rounded-full ${opt.active ? opt.dot : "bg-slate-200"}`} />
+              {opt.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-4 text-[11px] text-slate-400">
+          {showInput && <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-sky-400" />输入 <b className="font-semibold tabular-nums text-slate-700">{formatNumber(visibleSeries.reduce((a, s) => a + s.points.reduce((x, p) => x + p.input, 0), 0))}</b></span>}
+          {showOutput && <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-violet-400" />输出 <b className="font-semibold tabular-nums text-slate-700">{formatNumber(visibleSeries.reduce((a, s) => a + s.points.reduce((x, p) => x + p.output, 0), 0))}</b></span>}
+          {showCached && <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-400" />缓存 <b className="font-semibold tabular-nums text-slate-700">{formatNumber(visibleSeries.reduce((a, s) => a + s.points.reduce((x, p) => x + p.cached, 0), 0))}</b></span>}
+        </div>
       </div>
     </section>
   );

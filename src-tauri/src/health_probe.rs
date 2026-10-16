@@ -524,6 +524,8 @@ mod tests {
             client_cancelled: None,
             stream_committed: None,
             upstream_type: "channel".into(),
+            ttft_ms: None,
+            attempts: 0,
         };
         repo.create_log(&log).await.unwrap();
         // 探测行直接 SQL 插入(record_channel_probe 等价的最小路径)。
