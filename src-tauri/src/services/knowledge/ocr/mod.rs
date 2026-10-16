@@ -22,8 +22,27 @@ use crate::db::repository::Repository;
 use crate::server::event_bridge::EventSink;
 use crate::settings_store::SettingsStore;
 
-/// 单页文字层字符数低于该阈值即判定该页需要 OCR（全局常量，后续可在设置中暴露）
+/// 单页文字层字符数低于该阈值即判定该页需要 OCR（全局常量，后续可在设置中暴露）。
+/// 用于整篇平均判定 `is_scanned_pdf`（保留历史语义）。
 const MIN_CHARS_PER_PAGE: usize = 50;
+
+/// 页级判定阈值：**中文字符**不超过该数量即判需 OCR。
+/// 旧判定按"总字符 <50"（含标点/空格），图文混排页（如 20 个中文字 + 截图）会被误判为
+/// 扫描页走 VLM 识图，而 VLM 对这类页可能返回空 → 整页内容丢失（实测第 6 页 OCR_PAGE_FAILED）。
+/// 用户要求：超过 4 个中文字即视为文字层有效，不再依赖 OCR。
+const MIN_CJK_CHARS_PER_PAGE: usize = 4;
+
+/// 统计文本中的 CJK 表意字符（中文）数量。
+fn cjk_char_count(text: &str) -> usize {
+    text.chars()
+        .filter(|c| {
+            matches!(
+                *c as u32,
+                0x4E00..=0x9FFF | 0x3400..=0x4DBF | 0xF900..=0xFAFF | 0x3040..=0x30FF
+            )
+        })
+        .count()
+}
 
 /// 整篇判定（主流程已改用页级判定 `pages_needing_ocr`，保留供对照与测试）。
 /// 无法获知页数（page_count=0）时不判定为扫描版。
@@ -36,11 +55,12 @@ pub fn is_scanned_pdf(extracted_text: &str, page_count: usize) -> bool {
 
 /// 页级判定：返回文字层不足、需要 OCR 的页码（1 起）。
 /// 返回空 = 全文都有文字层（零 OCR 成本）；返回全部页 = 纯扫描件。
+/// 判定按**中文字符**计数（>MIN_CJK_CHARS_PER_PAGE 即文字层有效），而非总字符数。
 pub fn pages_needing_ocr(pages_text: &[String]) -> Vec<usize> {
     pages_text
         .iter()
         .enumerate()
-        .filter(|(_, text)| text.chars().count() < MIN_CHARS_PER_PAGE)
+        .filter(|(_, text)| cjk_char_count(text) <= MIN_CJK_CHARS_PER_PAGE)
         .map(|(i, _)| i + 1)
         .collect()
 }
