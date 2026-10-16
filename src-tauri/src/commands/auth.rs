@@ -508,7 +508,8 @@ fn provider_kind(provider: Option<String>) -> Result<ProviderKind, String> {
         | ProviderKind::Kimi
         | ProviderKind::Gemini
         | ProviderKind::Grok
-        | ProviderKind::WorkBuddy => Ok(kind),
+        | ProviderKind::WorkBuddy
+        | ProviderKind::Qoder => Ok(kind),
         ProviderKind::Other(_) => Err("Unsupported auth provider".to_owned()),
     }
 }
@@ -1538,7 +1539,13 @@ mod tests {
         assert!(!grok.supports_import);
         assert!(!grok.supports_export);
         assert!(!grok.supports_quota);
-        assert_eq!(providers.len(), 4);
+        let qoder = providers.iter().find(|p| p.id == "qoder").unwrap();
+        assert_eq!(qoder.display_name, "Qoder");
+        assert_eq!(qoder.login_mode, "device_code");
+        assert!(qoder.supports_import);
+        assert!(!qoder.supports_export);
+        assert!(!qoder.supports_quota);
+        assert_eq!(providers.len(), 6);
     }
 
     #[tokio::test]

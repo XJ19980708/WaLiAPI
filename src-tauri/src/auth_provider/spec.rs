@@ -113,7 +113,19 @@ const WORKBUDDY: ProviderSpec = ProviderSpec {
     supports_reset_credit: false,
 };
 
-const REGISTERED: &[&ProviderSpec] = &[&CODEX, &KIMI, &GEMINI, &GROK, &WORKBUDDY];
+const QODER: ProviderSpec = ProviderSpec {
+    kind: "qoder",
+    display_name: "Qoder",
+    icon_key: "qoder",
+    login_mode: AuthLoginMode::DeviceCode,
+    login_methods: &[AuthLoginMode::DeviceCode],
+    supports_import: true,
+    supports_export: false,
+    supports_quota: false,
+    supports_reset_credit: false,
+};
+
+const REGISTERED: &[&ProviderSpec] = &[&CODEX, &KIMI, &GEMINI, &GROK, &WORKBUDDY, &QODER];
 
 /// Spec for an explicit (non-`Other`) provider kind, if it is a known spec.
 pub fn provider_spec(kind: &ProviderKind) -> Option<&'static ProviderSpec> {
@@ -211,7 +223,19 @@ mod tests {
         assert!(names.contains(&"kimi"));
         assert!(names.contains(&"gemini"));
         assert!(names.contains(&"grok"));
-        assert_eq!(registered_provider_specs().len(), 5);
+        assert!(names.contains(&"qoder"));
+        assert_eq!(registered_provider_specs().len(), 6);
+    }
+
+    #[test]
+    fn qoder_spec_exact_values() {
+        let spec = provider_spec(&ProviderKind::Qoder).expect("qoder spec must exist");
+        assert_eq!(spec.kind, "qoder");
+        assert_eq!(spec.display_name, "Qoder");
+        assert_eq!(spec.login_mode, AuthLoginMode::DeviceCode);
+        assert!(spec.supports_import);
+        assert!(!spec.supports_export);
+        assert!(!spec.supports_quota);
     }
 
     #[test]

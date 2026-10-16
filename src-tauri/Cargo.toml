@@ -83,6 +83,15 @@ image = "0.25"
 # Token estimation (fallback when upstream doesn't return usage)
 tiktoken-rs = "0.6"
 
+# Qoder auth provider：COSY 签名（AES-128-CBC 加密用户信息 + RSA 加密密钥 + MD5 摘要）。
+# rsa / md-5 已在依赖树中（sqlx-mysql / lopdf），此处显式声明仅复用既有版本。
+rsa = { version = "0.9", features = ["sha2"] }
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc", "block-padding"] }
+md-5 = "0.10"
+# rsa 0.9 的 rand_core 与项目 rand 0.9 的 rand_core 版本对齐（避免 trait 不匹配）
+rand_core = { version = "0.6", features = ["getrandom"] }
+
 # tree-sitter code parsing
 tree-sitter = "0.25"
 tree-sitter-typescript = "0.23"

@@ -79,6 +79,7 @@ function providerMark(provider: AuthProviderInfo) {
   if (provider.id === "gemini" || provider.iconKey === "google") return "G";
   if (provider.id === "grok" || provider.iconKey === "grok") return "✦";
   if (provider.id === "workbuddy" || provider.iconKey === "workbuddy") return "W";
+  if (provider.id === "qoder" || provider.iconKey === "qoder") return "Q";
   return "⌘";
 }
 
@@ -93,6 +94,8 @@ function EmptyAccountSlot({ provider, onLogin, onSelectImportFormat, busy }: { p
         ? "设备码授权：在浏览器确认后返回。"
         : provider.id === "workbuddy"
           ? "打开 WorkBuddy 登录页，在浏览器确认授权后返回。"
+        : provider.id === "qoder"
+          ? "设备码授权：在浏览器完成 Qoder 登录后返回；也可导入 pt- 个人令牌。"
         : "浏览器 OAuth 登录（PKCE）或从本机 ~/.codex/auth.json 导入";
   return <section className="flex min-h-80 flex-col items-center justify-center rounded-[24px] border border-dashed border-border bg-card/50 p-6 text-center"><div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-success/10 text-xl font-bold text-success">{icon}</div><h2 className="mt-4 font-semibold">＋ 登录 {displayName} 账号</h2><p className="mt-2 max-w-xs text-sm leading-6 text-muted-foreground">{hint}</p><div className="mt-5 flex flex-wrap justify-center gap-2"><button onClick={onLogin} disabled={busy} className="action-primary"><KeyRound size={16} />登录</button>{provider.supportsImport && <ImportDropdown busy={busy} providerId={provider.id} onSelect={onSelectImportFormat} />}</div></section>;
 }
@@ -139,15 +142,15 @@ export function AuthChannelsPage() {
 
   const activeProvider = providers.find((p) => p.id === selectedProvider) ?? {
     id: selectedProvider,
-    displayName: selectedProvider === "kimi" ? "Kimi Code" : selectedProvider === "gemini" ? "Antigravity" : selectedProvider === "grok" ? "Grok" : selectedProvider === "workbuddy" ? "WorkBuddy" : "Codex",
-    iconKey: selectedProvider === "kimi" ? "moonshot" : selectedProvider === "gemini" ? "google" : selectedProvider === "grok" ? "grok" : selectedProvider === "workbuddy" ? "workbuddy" : "codex",
-    loginMode: selectedProvider === "kimi" || selectedProvider === "grok" || selectedProvider === "workbuddy" ? "device_code" : "browser_callback",
-    loginMethods: selectedProvider === "kimi" || selectedProvider === "grok" || selectedProvider === "workbuddy"
+    displayName: selectedProvider === "kimi" ? "Kimi Code" : selectedProvider === "gemini" ? "Antigravity" : selectedProvider === "grok" ? "Grok" : selectedProvider === "workbuddy" ? "WorkBuddy" : selectedProvider === "qoder" ? "Qoder" : "Codex",
+    iconKey: selectedProvider === "kimi" ? "moonshot" : selectedProvider === "gemini" ? "google" : selectedProvider === "grok" ? "grok" : selectedProvider === "workbuddy" ? "workbuddy" : selectedProvider === "qoder" ? "qoder" : "codex",
+    loginMode: selectedProvider === "kimi" || selectedProvider === "grok" || selectedProvider === "workbuddy" || selectedProvider === "qoder" ? "device_code" : "browser_callback",
+    loginMethods: selectedProvider === "kimi" || selectedProvider === "grok" || selectedProvider === "workbuddy" || selectedProvider === "qoder"
       ? ["device_code" as const]
       : selectedProvider === "gemini"
         ? ["browser_callback" as const]
         : ["browser_callback" as const, "device_code" as const],
-    supportsImport: selectedProvider === "codex",
+    supportsImport: selectedProvider === "codex" || selectedProvider === "qoder",
     supportsExport: selectedProvider === "codex",
     supportsQuota: selectedProvider === "codex" || selectedProvider === "gemini",
   };

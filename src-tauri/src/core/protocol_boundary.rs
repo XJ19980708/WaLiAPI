@@ -51,6 +51,8 @@ pub fn upstream_protocol(protocol: UpstreamProtocol, endpoint: &str) -> Option<P
         (UpstreamProtocol::Anthropic, "messages_beta") => Some(Protocol::Messages),
         (UpstreamProtocol::Responses, "responses") => Some(Protocol::Responses),
         (UpstreamProtocol::Gemini, "generate_content") => Some(Protocol::Gemini),
+        // Qoder 的私有 agent_chat wire 格式由专属 codec 承载。
+        (UpstreamProtocol::Qoder, "agent_chat") => Some(Protocol::Qoder),
         // Ollama's `api_chat`, CountTokens / Embeddings, unknown endpoint
         // strings, and mismatched transport-endpoint pairs are all outside
         // the typed codec matrix.
@@ -106,6 +108,10 @@ mod tests {
             upstream_protocol(UpstreamProtocol::Gemini, "generate_content"),
             Some(Protocol::Gemini)
         );
+        assert_eq!(
+            upstream_protocol(UpstreamProtocol::Qoder, "agent_chat"),
+            Some(Protocol::Qoder)
+        );
 
         for (protocol, endpoint) in [
             (UpstreamProtocol::Ollama, "api_chat"),
@@ -117,6 +123,7 @@ mod tests {
             (UpstreamProtocol::Ollama, "responses"),
             (UpstreamProtocol::OpenAI, "/v1/chat/completions"),
             (UpstreamProtocol::OpenAI, "unknown"),
+            (UpstreamProtocol::Qoder, "chat_completions"),
         ] {
             assert_eq!(
                 upstream_protocol(protocol, endpoint),

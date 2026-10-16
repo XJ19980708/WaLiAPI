@@ -3030,7 +3030,10 @@ impl Repository {
 
     /// 按天粒度聚合 token 消耗（热力图数据源）。读 usage_stats 小时桶，
     /// hour 前缀即日期；返回按天升序。
-    pub async fn get_daily_token_stats(&self, days: i64) -> Result<Vec<DailyTokenPoint>, sqlx::Error> {
+    pub async fn get_daily_token_stats(
+        &self,
+        days: i64,
+    ) -> Result<Vec<DailyTokenPoint>, sqlx::Error> {
         let since = (chrono::Utc::now() - chrono::Duration::days(days))
             .format("%Y-%m-%d")
             .to_string();

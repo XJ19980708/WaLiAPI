@@ -192,15 +192,42 @@ pub async fn dispatch_auth_account_executor(
         }
         let response_headers = safe_response_headers(response.headers());
         let bytes = response.bytes().await.unwrap_or_default();
-        let body: Value = match serde_json::from_slice(&bytes) {
-            Ok(body) => body,
-            Err(error) => {
+        // Qoder 网关对任何请求（含 stream:false）都返回 SSE；先把信封流
+        // 聚合成完整的 chat.completion，再走与非流式一致的解码路径。
+        let body: Value = if is_qoder_auth(attempt) {
+            let mut aggregator = crate::protocol::codec::qoder::QoderChatAggregator::new();
+            if let Err(message) = aggregator.push(&bytes) {
                 return AttemptResult::Failure(AttemptFailure {
                     failure_class: FailureClass::UpstreamProtocolError,
-                    message: format!("Auth account non-stream body failed JSON decode: {error}"),
+                    message: format!("Qoder SSE aggregation failed: {message}"),
                     status_code: Some(502),
                     retry_after: None,
-                })
+                });
+            }
+            match aggregator.finish() {
+                Ok(body) => body,
+                Err(message) => {
+                    return AttemptResult::Failure(AttemptFailure {
+                        failure_class: FailureClass::UpstreamProtocolError,
+                        message: format!("Qoder SSE aggregation failed: {message}"),
+                        status_code: Some(502),
+                        retry_after: None,
+                    })
+                }
+            }
+        } else {
+            match serde_json::from_slice(&bytes) {
+                Ok(body) => body,
+                Err(error) => {
+                    return AttemptResult::Failure(AttemptFailure {
+                        failure_class: FailureClass::UpstreamProtocolError,
+                        message: format!(
+                            "Auth account non-stream body failed JSON decode: {error}"
+                        ),
+                        status_code: Some(502),
+                        retry_after: None,
+                    })
+                }
             }
         };
         let mut body = body;
@@ -368,6 +395,12 @@ fn is_gemini_auth(attempt: &PreparedAttempt) -> bool {
     attempt.upstream_protocol == "gemini"
 }
 
+/// Qoder 网关对任何请求（含 `stream:false`）都返回 SSE `text/event-stream`。
+/// 非流式路径必须强制 `stream:true` 发送，把上游 SSE 聚合成完成体再解码。
+fn is_qoder_auth(attempt: &PreparedAttempt) -> bool {
+    attempt.upstream_protocol == "qoder"
+}
+
 fn non_stream_json_body(body: &Value, attempt: &PreparedAttempt) -> Value {
     let mut body = body.clone();
     if is_gemini_auth(attempt) {
@@ -378,7 +411,11 @@ fn non_stream_json_body(body: &Value, attempt: &PreparedAttempt) -> Value {
         return body;
     }
     if let Some(object) = body.as_object_mut() {
-        object.insert("stream".to_owned(), Value::Bool(false));
+        // Qoder 的网关没有 JSON 非流式形态：保持 codec 写入的 stream:true，
+        // 响应侧由 [`dispatch_auth_account_executor` 的 qoder 分支]聚合 SSE。
+        if !is_qoder_auth(attempt) {
+            object.insert("stream".to_owned(), Value::Bool(false));
+        }
         object.remove("stream_options");
     }
     ensure_messages_betas(&mut body, attempt);

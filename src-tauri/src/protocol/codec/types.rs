@@ -10,8 +10,9 @@ use std::fmt;
 
 /// Application protocol families in the codec matrix.
 ///
-/// `Gemini` is an **upstream-only** wire format (Code Assist generateContent).
-/// Downstream HTTP still exposes only Chat / Messages / Responses.
+/// `Gemini` and `Qoder` are **upstream-only** wire formats (Code Assist
+/// generateContent / Qoder agent_chat_generation). Downstream HTTP still
+/// exposes only Chat / Messages / Responses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Protocol {
@@ -19,6 +20,7 @@ pub enum Protocol {
     Messages,
     Responses,
     Gemini,
+    Qoder,
 }
 
 /// Stable identifier recorded in logs and conversion reports.
@@ -39,6 +41,9 @@ pub enum CodecId {
     ChatToGeminiV1,
     MessagesToGeminiV1,
     ResponsesToGeminiV1,
+    ChatToQoderV1,
+    MessagesToQoderV1,
+    ResponsesToQoderV1,
 }
 
 impl CodecId {
@@ -56,6 +61,9 @@ impl CodecId {
             Self::ChatToGeminiV1 => "chat_to_gemini_v1",
             Self::MessagesToGeminiV1 => "messages_to_gemini_v1",
             Self::ResponsesToGeminiV1 => "responses_to_gemini_v1",
+            Self::ChatToQoderV1 => "chat_to_qoder_v1",
+            Self::MessagesToQoderV1 => "messages_to_qoder_v1",
+            Self::ResponsesToQoderV1 => "responses_to_qoder_v1",
         }
     }
 }

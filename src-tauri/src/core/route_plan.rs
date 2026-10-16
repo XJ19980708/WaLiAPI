@@ -92,6 +92,8 @@ pub enum UpstreamProtocol {
     Responses,
     /// Gemini Code Assist generateContent (auth accounts only).
     Gemini,
+    /// Qoder 私有网关 agent_chat_generation（auth accounts only）。
+    Qoder,
 }
 
 impl UpstreamProtocol {
@@ -102,6 +104,7 @@ impl UpstreamProtocol {
             UpstreamProtocol::Ollama => "ollama",
             UpstreamProtocol::Responses => "responses",
             UpstreamProtocol::Gemini => "gemini",
+            UpstreamProtocol::Qoder => "qoder",
         }
     }
 }
@@ -809,6 +812,19 @@ fn profile_for_model_state(provider: &str, protocol: Option<&str>) -> Option<Aut
             upstream_endpoint: "chat_completions".into(),
             non_stream_framing: AuthNonStreamFraming::Json,
         }),
+        ("qoder", protocol) if protocol == "qoder" || protocol.starts_with("qoder:") => {
+            // Qoder 模型快照的 `protocol` 字段同时承载 wire 协议标记与上游
+            // 模型 key（`qoder:<key>`，由 auth_provider/qoder_backend 写入、
+            // 请求构造时反查）。所有 `qoder:*` 形态都走同一条私有 agent_chat
+            // wire profile。
+            Some(AuthRouteProfile {
+                provider: "qoder".into(),
+                native_base_url: "https://api3.qoder.sh".into(),
+                upstream_protocol: UpstreamProtocol::Qoder,
+                upstream_endpoint: "agent_chat".into(),
+                non_stream_framing: AuthNonStreamFraming::Json,
+            })
+        }
         // Unknown provider or unknown non-empty Kimi protocol: fail closed.
         _ => None,
     }
@@ -1184,7 +1200,9 @@ fn build_route_plan<R: Rng + ?Sized>(
                     if endpoint == EndpointKind::Responses
                         && !matches!(
                             profile.upstream_protocol,
-                            UpstreamProtocol::Responses | UpstreamProtocol::Gemini
+                            UpstreamProtocol::Responses
+                                | UpstreamProtocol::Gemini
+                                | UpstreamProtocol::Qoder
                         )
                         && responses_request_uses_additional_tools(body)
                     {
@@ -3090,6 +3108,72 @@ mod tests {
         })
         .to_string();
         account
+    }
+
+    fn qoder_account(id: &str, model: &str, protocol: &str) -> AuthAccount {
+        let mut account = auth_account(id, model, 1, 1);
+        account.provider = "qoder".into();
+        account.model_states_json = json!({
+            "version": 1,
+            "models": [{
+                "id": model,
+                "status": "available",
+                "unavailable": false,
+                "next_retry_after": null,
+                "last_error": null,
+                "protocol": protocol
+            }]
+        })
+        .to_string();
+        account
+    }
+
+    /// 回归测试：模型快照的 `protocol` 存的是上游 key（`qoder:<key>`），
+    /// 必须与裸 `"qoder"` 一样解析到 agent_chat wire profile。
+    /// 此前的 bug：只匹配 `("qoder", "qoder")`，导致所有真实快照 503。
+    #[test]
+    fn qoder_protocol_with_upstream_key_resolves_agent_chat_profile() {
+        for protocol in ["qoder", "qoder:gmodel", "qoder:kmodel_latest", "qoder:auto"] {
+            let account = qoder_account("q1", "GLM-5.3", protocol);
+            let profile = resolve_auth_route_profile(&account, "GLM-5.3")
+                .unwrap_or_else(|| panic!("protocol {protocol:?} must resolve"));
+            assert_eq!(profile.provider, "qoder");
+            assert_eq!(profile.upstream_protocol, UpstreamProtocol::Qoder);
+            assert_eq!(profile.upstream_endpoint, "agent_chat");
+            assert_eq!(profile.non_stream_framing, AuthNonStreamFraming::Json);
+        }
+    }
+
+    /// Chat 下游请求路由到 Qoder 账号：Conversion 组、agent_chat 端点。
+    #[test]
+    fn qoder_account_routes_chat_requests_as_conversion_group() {
+        let key = api_key(&[], &[]);
+        let account = qoder_account("q1", "GLM-5.3", "qoder:gmodel");
+        let plan = authorize_and_plan_with_accounts(
+            &key,
+            "GLM-5.3",
+            EndpointKind::ChatCompletions,
+            &[],
+            &[account],
+            &flags(false),
+            &json!({}),
+            &mut seeded(),
+        )
+        .unwrap();
+        assert_eq!(plan.groups.len(), 1);
+        assert_eq!(plan.groups[0].tier, GroupTier::Conversion);
+        assert_eq!(plan.groups[0].upstream_protocol, UpstreamProtocol::Qoder);
+        assert_eq!(plan.groups[0].candidates[0].upstream_endpoint, "agent_chat");
+        assert_eq!(
+            plan.groups[0].candidates[0].auth_provider.as_deref(),
+            Some("qoder")
+        );
+    }
+
+    #[test]
+    fn qoder_non_qoder_protocol_fails_closed() {
+        let account = qoder_account("q2", "GLM-5.3", "mars");
+        assert!(resolve_auth_route_profile(&account, "GLM-5.3").is_none());
     }
 
     fn account_with_models(id: &str, provider: &str, models: Value, mapping: Value) -> AuthAccount {

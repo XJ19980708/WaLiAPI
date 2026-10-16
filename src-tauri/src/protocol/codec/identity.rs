@@ -331,6 +331,9 @@ impl IdentityStreamDecoder {
             Protocol::Gemini => event
                 .get("usageMetadata")
                 .or_else(|| event.pointer("/response/usageMetadata")),
+            // Qoder 的 usage 在内层 OpenAI 兼容事件上，由 Qoder 流解码器
+            // 解信封后作为 Chat 形态喂入 identity 场景仅在原生直通时出现。
+            Protocol::Qoder => event.get("usage"),
         };
         let Some(usage) = usage else { return };
         let merged = self.usage.get_or_insert_with(|| Usage {
@@ -341,6 +344,7 @@ impl IdentityStreamDecoder {
             Protocol::Chat => ("prompt_tokens", "completion_tokens"),
             Protocol::Messages | Protocol::Responses => ("input_tokens", "output_tokens"),
             Protocol::Gemini => ("promptTokenCount", "candidatesTokenCount"),
+            Protocol::Qoder => ("prompt_tokens", "completion_tokens"),
         };
         if let Some(input) = usage.get(input_key).and_then(Value::as_u64) {
             merged.input_tokens = input;
@@ -463,6 +467,7 @@ pub(crate) fn parse_usage(protocol: Protocol, body: &Value) -> Option<Usage> {
             usage.get("input_tokens").and_then(Value::as_u64)
         }
         Protocol::Gemini => usage.get("promptTokenCount").and_then(Value::as_u64),
+        Protocol::Qoder => usage.get("prompt_tokens").and_then(Value::as_u64),
     };
     let output = match protocol {
         Protocol::Chat => usage.get("completion_tokens").and_then(Value::as_u64),
@@ -470,6 +475,7 @@ pub(crate) fn parse_usage(protocol: Protocol, body: &Value) -> Option<Usage> {
             usage.get("output_tokens").and_then(Value::as_u64)
         }
         Protocol::Gemini => usage.get("candidatesTokenCount").and_then(Value::as_u64),
+        Protocol::Qoder => usage.get("completion_tokens").and_then(Value::as_u64),
     };
     Some(Usage {
         input_tokens: input.unwrap_or_default(),

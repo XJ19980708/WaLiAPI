@@ -24,6 +24,7 @@ pub mod gemini;
 pub mod identity;
 pub mod messages;
 pub mod ports;
+pub mod qoder;
 pub mod registry;
 pub mod report;
 pub mod request;

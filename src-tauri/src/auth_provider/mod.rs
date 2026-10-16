@@ -10,6 +10,9 @@ pub mod grok_login;
 pub mod kimi_backend;
 pub mod kimi_login;
 pub mod maintenance;
+pub mod qoder_backend;
+pub mod qoder_cosy;
+pub mod qoder_login;
 pub mod service;
 pub mod spec;
 pub mod types;
@@ -202,6 +205,7 @@ impl Default for ProviderRegistry {
         registry.register(Arc::new(gemini_backend::GeminiProvider::new()));
         registry.register(Arc::new(grok_backend::GrokProvider::new()));
         registry.register(Arc::new(workbuddy_backend::WorkBuddyProvider::new()));
+        registry.register(Arc::new(qoder_backend::QoderProvider::new()));
         registry
     }
 }
