@@ -83,6 +83,27 @@ import { PromptTemplatesSection } from "../components/PromptTemplatesSection";
 type ServiceTab = "knowledge" | "wiki" | "mcp" | "skills" | "prompts";
 type KbTab = "documents" | "sources" | "search" | "ask" | "settings" | "index" | "mcp";
 
+// ── Wiki 摄入进度（模块级内存状态）────────────────────────────────
+// 进度提升到模块级：切换一级侧边栏（仪表盘/设置/日志）时「服务」页面整体卸载，
+// 组件内 state 会丢失 → 返回时进度条"有概率隐藏"（依赖实时事件流，挂载瞬间无新事件即空白）。
+// 模块级状态在卸载期间持续存活，回到「源」tab 立即恢复显示；完成/失败/取消后自动删除。
+type WikiProgressEntry = { stage: string; progress: number; detail: string; filename: string };
+let moduleWikiProgress: Record<string, WikiProgressEntry> = {};
+const wikiProgressSubs = new Set<() => void>();
+function patchWikiProgress(updater: (prev: Record<string, WikiProgressEntry>) => Record<string, WikiProgressEntry>) {
+  moduleWikiProgress = updater(moduleWikiProgress);
+  wikiProgressSubs.forEach((fn) => fn());
+}
+function useModuleWikiProgress(): Record<string, WikiProgressEntry> {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const fn = () => setTick((t) => t + 1);
+    wikiProgressSubs.add(fn);
+    return () => { wikiProgressSubs.delete(fn); };
+  }, []);
+  return moduleWikiProgress;
+}
+
 // ── 通用确认弹窗 ──────────────────────────────────────────────
 // Tauri WebView2 会抑制原生 window.confirm（直接继续执行），破坏性操作必须用
 // 自绘弹窗二次确认（项目约定：弹窗期间锁定 body 滚动）。
@@ -3928,9 +3949,9 @@ function WikiProjectDetail({
     return () => ro.disconnect();
   }, []);
 
-  // 摄入进度提升到父组件：子 tab 切换不卸载监听，回到「源」tab 时
-  // 未完成任务的进度条继续显示（动态刷新）；完成/失败/取消后自动隐藏并 bump 版本触发列表刷新。
-  const [wikiProgress, setWikiProgress] = useState<Record<string, { stage: string; progress: number; detail: string; filename: string }>>({});
+  // 摄入进度使用模块级状态：切换一级侧边栏（服务页整体卸载）不丢失，
+  // 回到「源」tab 时未完成任务进度条立即恢复显示；完成/失败/取消后删除条目并 bump 版本刷新列表。
+  const wikiProgress = useModuleWikiProgress();
   const [wikiSourcesVersion, setWikiSourcesVersion] = useState(0);
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -3944,7 +3965,7 @@ function WikiProjectDetail({
           const p = event.payload;
           if (p.project_id !== project.id) return;
           if (p.stage === "done" || p.stage === "error" || p.stage === "cancelled") {
-            setWikiProgress((prev) => {
+            patchWikiProgress((prev) => {
               const next = { ...prev };
               delete next[p.source_id];
               return next;
@@ -3952,7 +3973,7 @@ function WikiProjectDetail({
             setWikiSourcesVersion((v) => v + 1);
             if (p.stage === "done") onRefresh();
           } else {
-            setWikiProgress((prev) => ({
+            patchWikiProgress((prev) => ({
               ...prev,
               [p.source_id]: { stage: p.stage, progress: p.progress, detail: p.detail, filename: p.filename || prev[p.source_id]?.filename || "" },
             }));
