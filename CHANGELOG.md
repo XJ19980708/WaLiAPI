@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.4.2 (2026-10-16)
+
+### Qoder Auth 渠道（@fuzhengwei）
+
+- ✨ **新增 Qoder Auth Provider**：新增 `auth_provider/qoder_backend.rs`、`qoder_cosy.rs`、`qoder_login.rs`，Auth 账号体系接入 Qoder OAuth 登录、Token 刷新与模型发现；路由规划器（`route_plan.rs`）识别 Qoder 渠道身份
+- ✨ **Qoder 协议编解码器**：新增 `protocol/codec/qoder/`（含聚合聚合层），注册进 codec registry，支持 Qoder 渠道的请求/响应双向转换；前端登录弹窗、Provider 选项、Auth 渠道页同步接入
+
+### Wiki / RAG 体验优化（PR #159，@freakojc）
+
+- ✨ **Wiki PDF 摄入全链路修复**：重写 `services/wiki/ingest.rs`（+803），修复 Wiki PDF 摄入链路；OCR 渲染增强（`knowledge/ocr/render.rs`）
+- ✨ **API Key 细粒度知识访问授权**：新增迁移 `047_api_key_wiki_access`，API Key 可分别授权知识库 / Wiki 访问，服务端访问控制同步收紧
+- ✨ **RAG/Wiki 推理参数可配置**：新增迁移 `049_wiki_kb_reasoning_temperature`，支持为 RAG 问答与 Wiki 问答单独配置推理温度
+- 🎨 **知识库页面重构**：KnowledgeBasePage 大幅重构（+770），交互与信息展示优化；MCP handlers、`wiki-prompt.txt` 提示词同步增强
+- 🐛 **摄入进度条修复**：Wiki/RAG 摄入进度改为模块级状态，修复切换一级侧边栏后进度条丢失
+
+### 可观测性与仪表盘（@fuzhengwei）
+
+- ✨ **请求日志可观测性增强**：新增迁移 `048_request_log_observability` 与 `prompt_classify.rs` 请求意图分类（+369），端点执行器在请求链路落库分类结果；新增 `ObservabilityCards` 可观测卡片
+- 🎨 **仪表盘路由地图与热力图**：新增 `RouteMapCard` 渠道路由地图组件（+1099）与 `TokenHeatmap` Token 热力图组件，DashboardPage 配套重构
+
+### API 日志（@fuzhengwei）
+
+- ✨ **客户端识别**：新增 `utils/client_name.rs`（+133），从请求特征识别下游客户端（Claude Code / Codex / ChatBox 等），迁移 `047_request_log_client_name` 落库，日志页可按客户端筛选
+
+### 文档与其他
+
+- 📝 **README 多语言化**：主文档顶部新增「30 秒看懂 WaLiAPI」Mermaid 架构图与产品化 Hero；新增英文（`README.en.md`）与日文（`README.ja.md`）版本，顶部可切换语言；贡献者表后置至文档末尾
+- 📝 **MCP 网关规划文档**：新增 `docs/mcp-gateway-feasibility.md` 与 `docs/mcp-gateway-plan.md`
+- 🔧 **仓库整理**：`.gitignore` 补充本地临时产物忽略规则（根目录一次性工具项目、Playwright 产物、本地截图与笔记）
+- 🔧 **版本号统一升级至 0.4.2**（package.json / Cargo.toml / tauri.conf.json / Cargo.lock）
+
 ## v0.4.1 (2026-10-13)
 
 ### WorkBuddy 对接（@fuzhengwei）

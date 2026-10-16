@@ -9,7 +9,7 @@
 **Unify OpenAI, Claude, DeepSeek, Gemini and more behind one local gateway.**<br>
 **One key, one protocol, one complete audit log — for Claude Code, Codex CLI, Gemini CLI, WaLiCode and any AI coding tool.**
 
-[![Version](https://img.shields.io/badge/version-0.4.1-blue.svg)](./src-tauri/tauri.conf.json)
+[![Version](https://img.shields.io/badge/version-0.4.2-blue.svg)](./src-tauri/tauri.conf.json)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](#getting-started)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app)
@@ -420,11 +420,14 @@ WaLiAPI is designed **local / intranet first**. Read this section before deployi
 
 The full release history (in Chinese) is maintained in the [main README](README.md#-版本历史). Latest release:
 
-### v0.4.1 (2026-10-13)
+### v0.4.2 (2026-10-16)
 
-- ✨ **WorkBuddy Auth Provider**: new `auth_provider/workbuddy_backend.rs` and `workbuddy_login.rs`; the Auth account system now supports WorkBuddy sign-in and credential management; the route planner recognizes WorkBuddy channel identities
-- 🐛 **Knowledge base embedding batch index recovery** (PR #158): automatic recovery from duplicate batch indexes, no more vector write failures or index corruption
-- 🐛 **Windows upgrade compatibility** (PR #157): CRLF migration checksum tolerance for legacy installers; WAL enabled best-effort at startup, fixing startup white-screen crashes on upgrade
+- ✨ **Qoder Auth Provider**: new `auth_provider/qoder_backend.rs`, `qoder_cosy.rs` and `qoder_login.rs`; the Auth account system now supports Qoder OAuth sign-in, token refresh and model discovery, with a new `protocol/codec/qoder/` codec registered in the codec registry
+- ✨ **Wiki PDF ingestion fixed end-to-end** (PR #159, @freakojc): rewritten `services/wiki/ingest.rs`, enhanced OCR rendering; API Keys can now be granted fine-grained knowledge-base / Wiki access; per-feature reasoning temperature for RAG and Wiki Q&A; modular ingest progress state
+- ✨ **Observability & dashboard**: request-intent classification (`prompt_classify.rs`), new `RouteMapCard` routing-map and `TokenHeatmap` components on the Dashboard
+- ✨ **API log client identification**: downstream clients (Claude Code / Codex / ChatBox …) are recognized from request signatures, stored, and filterable in the Logs page
+- 📝 **Multilingual README**: new "WaLiAPI in 30 Seconds" Mermaid diagram, English and Japanese versions with a language switcher
+- 🔧 **Version bump to 0.4.2** (package.json / Cargo.toml / tauri.conf.json / Cargo.lock)
 
 ---
 

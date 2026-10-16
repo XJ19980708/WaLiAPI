@@ -9,7 +9,7 @@
 **OpenAI、Claude、DeepSeek、Gemini などの上流モデルを、ひとつのローカルゲートウェイに統合。**<br>
 **ひとつのキー、ひとつのプロトコル、完全な監査ログで、Claude Code・Codex CLI・Gemini CLI・WaLiCode などの AI コーディングツールに接続。**
 
-[![Version](https://img.shields.io/badge/version-0.4.1-blue.svg)](./src-tauri/tauri.conf.json)
+[![Version](https://img.shields.io/badge/version-0.4.2-blue.svg)](./src-tauri/tauri.conf.json)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](#はじめに)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app)
@@ -382,11 +382,14 @@ WaLiAPI は**ローカル / イントラネット優先**で設計されてい�
 
 完全なリリース履歴（中国語）は[メイン README](README.md#-版本历史) を参照してください。最新リリース：
 
-### v0.4.1 (2026-10-13)
+### v0.4.2 (2026-10-16)
 
-- ✨ **WorkBuddy Auth Provider**：`auth_provider/workbuddy_backend.rs` と `workbuddy_login.rs` を追加。Auth アカウント体系が WorkBuddy ログインと認証情報管理に対応し、ルートプランナーが WorkBuddy チャネル識別を認識
-- 🐛 **ナレッジベース埋め込みバッチインデックスの復旧**（PR #158）：重複バッチインデックスから自動復旧し、ベクトル書き込み失敗やインデックス破損を解消
-- 🐛 **Windows アップグレード互換**（PR #157）：旧インストーラの CRLF 移行チェックサムを許容、WAL 起動時 best-effort 化によりアップグレード時の白画面クラッシュを修正
+- ✨ **Qoder Auth Provider**：`auth_provider/qoder_backend.rs`・`qoder_cosy.rs`・`qoder_login.rs` を追加。Auth アカウント体系が Qoder OAuth ログイン・トークン更新・モデル発見に対応し、`protocol/codec/qoder/` コーデックをレジストリに登録
+- ✨ **Wiki PDF 取り込みの全面修復**（PR #159、@freakojc）：`services/wiki/ingest.rs` を書き直し、OCR レンダリング強化。API Key ごとにナレッジベース / Wiki へのアクセス許可を個別設定可能に、RAG・Wiki Q&A の推論温度を個別設定可能に、取り込み進捗をモジュールレベル状態に変更
+- ✨ **可観測性とダッシュボード**：リクエスト意図分類（`prompt_classify.rs`）、ダッシュボードに `RouteMapCard` ルーティングマップと `TokenHeatmap` を追加
+- ✨ **API ログのクライアント識別**：リクエスト特徴から下流クライアント（Claude Code / Codex / ChatBox など）を識別して記録し、ログページでフィルタ可能
+- 📝 **README 多言語化**：「30 秒でわかる WaLiAPI」Mermaid 図、英語版・日本語版と言語切替を追加
+- 🔧 **バージョンを 0.4.2 に更新**（package.json / Cargo.toml / tauri.conf.json / Cargo.lock）
 
 ---
 
