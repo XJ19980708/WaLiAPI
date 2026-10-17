@@ -77,7 +77,6 @@ import {
   AlertTriangle,
   Save,
   Inbox,
-  AppWindow,
 } from "lucide-react";
 
 import { PromptTemplatesSection } from "../components/PromptTemplatesSection";
@@ -156,7 +155,7 @@ export function KnowledgeBasePage() {
   const serviceTabs: { key: ServiceTab; label: string; icon: typeof BookOpen }[] = [
     { key: "knowledge", label: "RAG", icon: BookOpen },
     { key: "wiki", label: "Wiki", icon: Network },
-    { key: "software", label: "Software", icon: AppWindow },
+    { key: "software", label: "Link", icon: Link },
     { key: "mcp", label: "MCP", icon: Terminal },
     { key: "skills", label: "Skills", icon: Puzzle },
     { key: "prompts", label: "Prompt 模板", icon: FileText },
@@ -168,7 +167,7 @@ export function KnowledgeBasePage() {
       <div className="page-header sticky top-0 z-30 flex-wrap -mx-7 -mt-7 mb-2 bg-white/90 px-7 py-5 backdrop-blur-md border-b border-slate-100" ref={headerRef}>
         <div className="min-w-0">
           <h1 className="page-title">服务</h1>
-          <p className="page-subtitle">本地 RAG 知识库 · Wiki 知识图谱 · Software · MCP · Prompt 模板 · 支持 AI Agent 对接</p>
+          <p className="page-subtitle">本地 RAG 知识库 · Wiki 知识图谱 · Link · MCP · Prompt 模板 · 支持 AI Agent 对接</p>
         </div>
         <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
           {serviceTabs.map(({ key, label, icon: Icon }) => (

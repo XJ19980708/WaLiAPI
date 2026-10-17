@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { AppWindow, Plus, RefreshCw, Trash2, Pencil, Terminal, Globe, ScanSearch, Check } from "lucide-react";
+import { AppWindow, Plus, RefreshCw, Trash2, Pencil, Terminal, Globe, ScanSearch, Check, Link as LinkIcon } from "lucide-react";
 import { softwareApi, serverApi } from "../lib/api";
+import { Select } from "../components/Select";
 import type {
   SoftwareInstance,
   SoftwareConnectorInfo,
@@ -278,10 +279,10 @@ export function SoftwareSection() {
       <div className="flex flex-wrap items-center gap-2">
         <div className="min-w-0 flex-1">
           <h2 className="flex items-center gap-2 text-sm font-medium text-slate-900">
-            <AppWindow size={16} className="text-blue-500" /> 软件对接
+            <LinkIcon size={16} className="text-blue-500" /> Link 链接
           </h2>
           <p className="mt-0.5 text-xs text-slate-500">
-            把本地软件的操作能力封装为 MCP 工具，AI Agent 连接 /mcp 即可操作软件
+            通过本机软件、HTTP、微信等多种连接器，把操作能力封装为 MCP 工具，AI Agent 连接 /mcp 即可操作
           </p>
         </div>
         <button className="action-secondary flex items-center gap-1.5" onClick={() => void runScan()}>
@@ -395,17 +396,14 @@ export function SoftwareSection() {
                     onChange={(v) => void toggleMcp(inst, v)}
                   />
                 </label>
-                <select
-                  className="rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
+                <Select
+                  size="sm"
+                  className="w-36"
+                  ariaLabel="审批策略"
                   value={inst.approval_mode}
-                  onChange={(e) => void changeApproval(inst, e.target.value)}
-                >
-                  {APPROVAL_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(v) => void changeApproval(inst, v)}
+                  options={APPROVAL_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+                />
                 <button className="action-secondary" onClick={() => void showTools(inst)}>
                   {expandedTools === inst.id ? "收起工具" : "工具"}
                 </button>
@@ -606,17 +604,13 @@ export function SoftwareSection() {
 
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-600">审批策略</label>
-                <select
-                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                <Select
+                  className="w-full"
+                  ariaLabel="审批策略"
                   value={editor.approvalMode}
-                  onChange={(e) => setEditor({ ...editor, approvalMode: e.target.value })}
-                >
-                  {APPROVAL_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label} — {o.hint}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(v) => setEditor({ ...editor, approvalMode: v })}
+                  options={APPROVAL_OPTIONS.map((o) => ({ value: o.value, label: `${o.label} — ${o.hint}` }))}
+                />
               </div>
 
               <label className="flex items-center gap-2 text-sm text-slate-700">
