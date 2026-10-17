@@ -129,9 +129,13 @@ end tableText
 
 tell application "System Events" to tell process "WeChat"
   -- 前置检查：微信主窗口必须存在（微信常驻菜单栏时主窗口往往是关的）
+  -- 注意：辅助功能权限被拒（-10004/-25211/-1719）也会让 count 失败，
+  -- 必须原样抛出让上层映射为授权指引，不能吞成 WECHAT_NO_WINDOW
   set wc to 0
   try
     set wc to count of windows
+  on error errMsg number errNum
+    if errNum is -10004 or errNum is -25211 or errNum is -1719 then error errMsg number errNum
   end try
   if wc is 0 then error "WECHAT_NO_WINDOW"
   -- 阶段一：浅层 BFS 找表格类容器（只下钻 Group/SplitGroup/ScrollArea/TabGroup）
