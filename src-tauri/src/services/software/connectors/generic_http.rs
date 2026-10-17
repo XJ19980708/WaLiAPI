@@ -89,14 +89,12 @@ fn manifest_for(entry: &serde_json::Value) -> Result<ToolManifest, String> {
             .get_mut("properties")
             .and_then(|v| v.as_object_mut())
             .expect("build_input_schema 必产出 properties");
-        props
-            .entry(ph.clone())
-            .or_insert_with(|| {
-                serde_json::json!({
-                    "type": "string",
-                    "description": format!("路径参数 {ph}（必填）"),
-                })
-            });
+        props.entry(ph.clone()).or_insert_with(|| {
+            serde_json::json!({
+                "type": "string",
+                "description": format!("路径参数 {ph}（必填）"),
+            })
+        });
         let required = input_schema
             .as_object_mut()
             .unwrap()
@@ -365,7 +363,10 @@ mod tests {
         assert_eq!(tools.len(), 1);
         let schema = tools[0].input_schema.clone();
         let props = schema["properties"].as_object().unwrap();
-        assert!(props.contains_key("taskId"), "占位符应出现在 properties: {schema}");
+        assert!(
+            props.contains_key("taskId"),
+            "占位符应出现在 properties: {schema}"
+        );
         let required = schema["required"].as_array().unwrap();
         assert!(required.iter().any(|v| v == "taskId"));
     }
@@ -389,6 +390,9 @@ mod tests {
         }));
         let tools = GenericHttpConnector.list_tools(&inst).await.unwrap();
         let props = tools[0].input_schema["properties"].as_object().unwrap();
-        assert!(props.contains_key("sortBy"), "驼峰 query 参数不应被丢弃: {props:?}");
+        assert!(
+            props.contains_key("sortBy"),
+            "驼峰 query 参数不应被丢弃: {props:?}"
+        );
     }
 }

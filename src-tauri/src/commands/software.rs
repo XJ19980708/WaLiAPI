@@ -250,3 +250,31 @@ pub async fn import_openapi(
     let out = crate::services::software::openapi_import::import(&spec, base_url.as_deref())?;
     serde_json::to_value(out).map_err(|e| e.to_string())
 }
+
+/// CLI-Hub 社区目录（hub 可用时实时列表 + 安装状态，否则内置精选）。
+#[tauri::command]
+pub async fn get_clihub_catalog() -> Result<serde_json::Value, String> {
+    let cat = crate::services::software::clihub::catalog().await;
+    serde_json::to_value(cat).map_err(|e| e.to_string())
+}
+
+/// 安装 CLI-Hub 社区 CLI（`cli-hub install <name>`，耗时操作）。
+#[tauri::command]
+pub async fn install_clihub_cli(name: String) -> Result<String, String> {
+    crate::services::software::clihub::install(&name).await
+}
+
+/// 把已安装的 CLI-Hub CLI 一键接入为 Link 实例（connector = clihub）。
+#[tauri::command]
+pub async fn create_clihub_instance(
+    state: State<'_, Arc<AppState>>,
+    name: String,
+    mcp_enabled: Option<bool>,
+) -> Result<SoftwareInstance, String> {
+    crate::services::software::clihub::create_instance(
+        state.inner(),
+        &name,
+        mcp_enabled.unwrap_or(true),
+    )
+    .await
+}

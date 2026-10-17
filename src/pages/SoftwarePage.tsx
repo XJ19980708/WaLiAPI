@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { AppWindow, Plus, RefreshCw, Trash2, Pencil, Terminal, Globe, ScanSearch, Check, Link as LinkIcon, FileJson, History, Activity, CircleHelp } from "lucide-react";
+import { AppWindow, Plus, RefreshCw, Trash2, Pencil, Terminal, Globe, ScanSearch, Check, Link as LinkIcon, FileJson, History, Activity, CircleHelp, Package } from "lucide-react";
 import { softwareApi, serverApi } from "../lib/api";
 import { Select } from "../components/Select";
 import type {
@@ -9,6 +9,8 @@ import type {
   SoftwareToolLog,
   ScannedApp,
   CreateSoftwareInstanceInput,
+  ClihubCatalog,
+  ClihubEntry,
 } from "../types";
 
 const APPROVAL_OPTIONS = [
@@ -239,6 +241,14 @@ export function SoftwareSection() {
   const [scanSelected, setScanSelected] = useState<Set<string>>(new Set());
   const [scanDone, setScanDone] = useState<string[]>([]);
 
+  // CLI-Hub（CLI-Anything 社区）目录弹窗
+  const [hubOpen, setHubOpen] = useState(false);
+  const [hubCatalog, setHubCatalog] = useState<ClihubCatalog | null>(null);
+  const [hubLoading, setHubLoading] = useState(false);
+  const [hubBusy, setHubBusy] = useState<string>(""); // 正在安装/接入的 CLI 名
+  const [hubNotice, setHubNotice] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [hubQuery, setHubQuery] = useState("");
+
   // 分区折叠：接入新区默认无实例时展开（null = 跟随实例数）；调用日志默认收起
   // 单实例调用日志弹窗
   const [instLog, setInstLog] = useState<{ inst: SoftwareInstance; logs: SoftwareToolLog[] } | null>(null);
@@ -432,6 +442,58 @@ export function SoftwareSection() {
       else next.add(name);
       return next;
     });
+  };
+
+  /** 打开 CLI-Hub 目录弹窗并加载目录（hub 未安装时后端返回内置精选） */
+  const openClihub = async () => {
+    setPickOpen(false);
+    setHubOpen(true);
+    setHubNotice(null);
+    setHubQuery("");
+    setHubLoading(true);
+    try {
+      setHubCatalog(await softwareApi.getClihubCatalog());
+    } catch (e) {
+      setHubNotice({ kind: "err", text: String(e) });
+    } finally {
+      setHubLoading(false);
+    }
+  };
+
+  /** 安装社区 CLI（cli-hub install，耗时可能数分钟） */
+  const installClihub = async (entry: ClihubEntry) => {
+    setHubBusy(entry.name);
+    setHubNotice(null);
+    try {
+      await softwareApi.installClihubCli(entry.name);
+      setHubNotice({ kind: "ok", text: `${entry.display_name} 安装完成，正在接入...` });
+      // 安装成功直接接入
+      await softwareApi.createClihubInstance(entry.name);
+      setHubNotice({ kind: "ok", text: `${entry.display_name} 已接入，工具已暴露到 /mcp` });
+      const [inst] = await Promise.all([softwareApi.getInstances()]);
+      setInstances(inst);
+      setHubCatalog(await softwareApi.getClihubCatalog());
+    } catch (e) {
+      setHubNotice({ kind: "err", text: String(e) });
+    } finally {
+      setHubBusy("");
+    }
+  };
+
+  /** 已安装的 CLI 一键接入实例 */
+  const connectClihub = async (entry: ClihubEntry) => {
+    setHubBusy(entry.name);
+    setHubNotice(null);
+    try {
+      await softwareApi.createClihubInstance(entry.name);
+      setHubNotice({ kind: "ok", text: `${entry.display_name} 已接入，工具已暴露到 /mcp` });
+      setInstances(await softwareApi.getInstances());
+      setHubCatalog(await softwareApi.getClihubCatalog());
+    } catch (e) {
+      setHubNotice({ kind: "err", text: String(e) });
+    } finally {
+      setHubBusy("");
+    }
   };
 
   const importSelected = async () => {
@@ -798,7 +860,7 @@ export function SoftwareSection() {
                 <div className="mb-1 font-medium text-slate-900">
                   第 1 步 · 接入软件（建立连接）
                 </div>
-                点击右上角「<b>接入软件</b>」选择接入方式，或使用「<b>扫描本机软件</b>」自动识别已安装的应用：
+                点击右上角「<b>接入软件</b>」选择接入方式，或使用「<b>扫描本机软件</b>」自动识别已安装的应用。推荐优先使用 <b>CLI-Hub 社区 CLI</b>（CLI-Anything 项目为真实软件生成的 agent 原生 CLI）：
                 <ul className="mt-1.5 list-disc space-y-1 pl-5 text-[13px]">
                   <li>
                     <b>通用本地 HTTP</b>：对接自带 HTTP API 的软件（Ollama、下载器、自研服务等）。支持粘贴
@@ -872,6 +934,25 @@ export function SoftwareSection() {
               选择连接器类型后进入配置；也可以扫描本机已安装的软件自动识别。
             </p>
             <div className="space-y-2">
+              <button
+                className="surface-soft flex w-full items-start gap-3 rounded-2xl border-blue-200/70 bg-blue-50/60 p-4 text-left transition-shadow hover:shadow-[0_8px_18px_rgba(15,23,42,0.06)]"
+                onClick={() => void openClihub()}
+              >
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-blue-200 bg-white">
+                  <Package size={17} className="text-blue-500" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-2">
+                    <span className="font-medium text-slate-900">CLI-Hub 社区 CLI（推荐）</span>
+                    <span className="rounded-full border border-blue-200 bg-white px-2 py-0.5 text-[10px] text-blue-600">
+                      103+ 应用
+                    </span>
+                  </span>
+                  <span className="mt-1 block text-xs leading-relaxed text-slate-500">
+                    CLI-Anything 社区为真实软件生成的 agent 原生 CLI（GIMP、Blender、LibreOffice、OBS 等），一键安装接入，help 探索 + --json 执行
+                  </span>
+                </span>
+              </button>
               {catalog.map((c) => (
                 <button
                   key={c.id}
@@ -914,6 +995,122 @@ export function SoftwareSection() {
               >
                 <ScanSearch size={14} /> 扫描本机软件
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CLI-Hub 社区目录弹窗 */}
+      {hubOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-6"
+          onClick={() => setHubOpen(false)}
+        >
+          <div
+            className="surface flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-1 flex items-center gap-2">
+              <Package size={18} className="text-blue-500" />
+              <h2 className="text-base font-medium text-slate-900">CLI-Hub 社区 CLI</h2>
+              <span className="text-xs text-slate-400">
+                {hubLoading ? "加载中..." : hubCatalog ? `共 ${hubCatalog.entries.length} 个` : ""}
+              </span>
+            </div>
+            <p className="mb-3 text-xs text-slate-500">
+              来自 CLI-Anything 社区的 agent 原生 CLI：接入后每个 CLI 暴露 help（探索命令）+ run（--json 执行）两个 MCP 工具。
+            </p>
+
+            {hubNotice && (
+              <div
+                className={`mb-3 flex items-start gap-2 rounded-2xl border px-3 py-2 text-xs ${
+                  hubNotice.kind === "ok"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    : "border-rose-200 bg-rose-50 text-rose-600"
+                }`}
+              >
+                {hubNotice.kind === "ok" ? <Check size={14} className="mt-0.5 shrink-0" /> : null}
+                <span className="min-w-0 break-all">{hubNotice.text}</span>
+              </div>
+            )}
+
+            {hubCatalog && !hubCatalog.hub_available && (
+              <div className="mb-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                未检测到 cli-hub 命令，以下为内置精选目录。先在终端执行
+                <code className="mx-1 rounded bg-white px-1 py-0.5 font-mono">pip install cli-anything-hub</code>
+                获取全部 103+ 条目与安装能力。
+              </div>
+            )}
+
+            {hubCatalog && hubCatalog.entries.length > 8 && (
+              <input
+                value={hubQuery}
+                onChange={(e) => setHubQuery(e.target.value)}
+                placeholder="按名称 / 描述 / 分类筛选，如 gimp、image、3d"
+                className="mb-3 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400"
+              />
+            )}
+
+            <div className="min-h-0 flex-1 overflow-y-auto rounded-2xl border border-slate-100">
+              {hubLoading && (
+                <div className="p-8 text-center text-sm text-slate-400">正在加载社区目录...</div>
+              )}
+              {!hubLoading &&
+                (hubCatalog?.entries ?? [])
+                  .filter((e) => {
+                    if (!hubQuery.trim()) return true;
+                    const q = hubQuery.trim().toLowerCase();
+                    return (
+                      e.name.includes(q) ||
+                      e.display_name.toLowerCase().includes(q) ||
+                      e.description.toLowerCase().includes(q) ||
+                      e.category.includes(q)
+                    );
+                  })
+                  .map((e) => (
+                    <div
+                      key={e.name}
+                      className="flex items-center gap-3 border-b border-slate-50 px-4 py-3 last:border-0 hover:bg-slate-50"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm text-slate-900">{e.display_name}</span>
+                          <span className="rounded-full border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] text-slate-500">
+                            {e.category}
+                          </span>
+                          {e.installed && (
+                            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-600">
+                              已安装
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-0.5 line-clamp-2 text-[11px] leading-relaxed text-slate-500">
+                          {e.description}
+                          {e.requires ? `（依赖：${e.requires}）` : ""}
+                        </div>
+                      </div>
+                      <button
+                        disabled={hubBusy === e.name}
+                        className={`shrink-0 rounded-xl border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50 ${
+                          e.installed
+                            ? "border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100"
+                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"
+                        }`}
+                        onClick={() => void (e.installed ? connectClihub(e) : installClihub(e))}
+                      >
+                        {hubBusy === e.name
+                          ? e.installed
+                            ? "接入中..."
+                            : "安装中（可能数分钟）..."
+                          : e.installed
+                            ? "接入"
+                            : "安装并接入"}
+                      </button>
+                    </div>
+                  ))}
+              {!hubLoading && (hubCatalog?.entries ?? []).length === 0 && (
+                <div className="p-8 text-center text-sm text-slate-400">目录为空</div>
+              )}
             </div>
           </div>
         </div>

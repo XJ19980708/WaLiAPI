@@ -1107,6 +1107,18 @@ async fn dispatch(shared: &SharedState, cmd: &str, args: Value) -> Result<Value,
         "import_openapi" => to_json(
             commands::software::import_openapi(arg(&args, "spec")?, arg(&args, "base_url")?).await,
         ),
+        "get_clihub_catalog" => to_json(commands::software::get_clihub_catalog().await),
+        "install_clihub_cli" => {
+            to_json(commands::software::install_clihub_cli(arg(&args, "name")?).await)
+        }
+        "create_clihub_instance" => to_json(
+            commands::software::create_clihub_instance(
+                state,
+                arg(&args, "name")?,
+                arg(&args, "mcpEnabled")?,
+            )
+            .await,
+        ),
 
         _ => Err(format!("未知命令: {cmd}")),
     }

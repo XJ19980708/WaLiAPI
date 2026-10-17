@@ -6,6 +6,10 @@
 //! - `wechat`：微信桌面端实验性连接器（macOS 脚本桥 + UI 自动化，P2）
 //! - `generic_mcp`：MCP 聚合网关（路径 E，代理社区现成 MCP Server，P3）
 
+//! - `clihub`：CLI-Hub 社区 CLI 连接器（包装 CLI-Anything 生成的
+//!   agent 原生 CLI，help 探索 + run --json 执行）
+
+pub mod clihub;
 pub mod generic_cli;
 pub mod generic_http;
 pub mod generic_mcp;
@@ -20,6 +24,7 @@ static REGISTRY: OnceLock<Vec<Box<dyn SoftwareConnector>>> = OnceLock::new();
 pub fn all() -> &'static [Box<dyn SoftwareConnector>] {
     REGISTRY.get_or_init(|| {
         vec![
+            Box::new(clihub::ClihubConnector),
             Box::new(generic_cli::GenericCliConnector),
             Box::new(generic_http::GenericHttpConnector),
             Box::new(generic_mcp::GenericMcpConnector),

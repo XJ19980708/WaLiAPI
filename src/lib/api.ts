@@ -21,6 +21,7 @@ import type {
   SoftwareInstance, CreateSoftwareInstanceInput, UpdateSoftwareInstanceInput,
   SoftwareConnectorInfo, SoftwareToolPreview, SoftwareToolLog,
   ScannedApp,
+  ClihubCatalog,
 } from "../types";
 
 /**
@@ -772,4 +773,11 @@ export const softwareApi = {
       "import_openapi",
       { spec, base_url: baseUrl || undefined },
     ),
+  /** CLI-Hub（CLI-Anything 社区）目录：hub 未安装时返回内置精选 */
+  getClihubCatalog: () => invoke<ClihubCatalog>("get_clihub_catalog"),
+  /** 安装 CLI-Hub CLI（cli-hub install <name>，耗时操作，返回输出尾部） */
+  installClihubCli: (name: string) => invoke<string>("install_clihub_cli", { name }),
+  /** 已安装的 CLI 一键接入为 Link 实例（connector=clihub） */
+  createClihubInstance: (name: string, mcpEnabled = true) =>
+    invoke<SoftwareInstance>("create_clihub_instance", { name, mcpEnabled }),
 };

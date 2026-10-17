@@ -877,3 +877,22 @@ export interface ScannedApp {
   source: string;
   suggestion: ConnectorSuggestion | null;
 }
+
+/** CLI-Hub（CLI-Anything 社区）目录条目 */
+export interface ClihubEntry {
+  name: string;
+  display_name: string;
+  description: string;
+  entry_point: string;
+  category: string;
+  requires?: string | null;
+  installed: boolean;
+  /** true = 实时 cli-hub 目录；false = hub 未安装时的内置精选 */
+  live: boolean;
+}
+
+/** CLI-Hub 目录（hub 可用性 + 条目列表） */
+export interface ClihubCatalog {
+  hub_available: boolean;
+  entries: ClihubEntry[];
+}

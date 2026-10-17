@@ -9,6 +9,7 @@
 //! - [`mcp_bridge`]：MCP 层桥接（动态 tools/list + tools/call 分发）
 
 pub mod approval;
+pub mod clihub;
 pub mod connector;
 pub mod connectors;
 pub mod executor;

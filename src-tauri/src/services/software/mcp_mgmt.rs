@@ -18,6 +18,9 @@ pub const TOOL_NAMES: &[&str] = &[
     "software_update_instance",
     "software_delete_instance",
     "software_import_openapi",
+    "software_clihub_list",
+    "software_clihub_install",
+    "software_clihub_create_instance",
 ];
 
 /// 追加到 /mcp tools/list 的工具定义（与 mcp_bridge 动态工具同层级）。
@@ -96,6 +99,32 @@ pub fn tool_defs() -> Vec<Value> {
                 "required": ["spec"]
             }
         }),
+        json!({
+            "name": "software_clihub_list",
+            "description": "列出 CLI-Anything 社区（CLI-Hub）可一键接入的 agent 原生 CLI 目录（103+ 条：GIMP / Blender / LibreOffice / OBS 等，含分类、依赖要求、安装状态）。用户想接入图形界面软件时优先查这里。",
+            "inputSchema": {"type": "object", "properties": {}}
+        }),
+        json!({
+            "name": "software_clihub_install",
+            "description": "安装 CLI-Hub 社区 CLI（cli-hub install <name>，pip 拉取构建，可能耗时数分钟）。前置：本机已 pip install cli-anything-hub。安装完成后再调 software_clihub_create_instance 接入。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"name": {"type": "string", "description": "CLI 名（来自 software_clihub_list，如 gimp）"}},
+                "required": ["name"]
+            }
+        }),
+        json!({
+            "name": "software_clihub_create_instance",
+            "description": "把已安装的 CLI-Hub CLI 一键接入为 Link 实例（connector=clihub，暴露 help 探索 + run --json 执行两个工具，run 默认 low_write、审批 confirm_high_risk）。要求 cli-anything-<name> 已在 PATH。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "CLI 名（如 gimp）"},
+                    "mcp_enabled": {"type": "boolean", "description": "是否在 /mcp 暴露工具，默认 true"}
+                },
+                "required": ["name"]
+            }
+        }),
     ]
 }
 
@@ -166,6 +195,36 @@ async fn handle(state: &AppState, tool: &str, args: &Value) -> Result<Value, Str
                 "config": out.config,
                 "hint": "把 config 字段作为 software_create_instance 的 config 参数（connector_id=generic_http）",
             })
+        }
+        "software_clihub_list" => {
+            let cat = crate::services::software::clihub::catalog().await;
+            json!({
+                "hub_available": cat.hub_available,
+                "install_hint": if cat.hub_available { None } else { Some("先执行 pip install cli-anything-hub 获取实时目录；以下为内置精选".to_string()) },
+                "count": cat.entries.len(),
+                "entries": cat.entries,
+            })
+        }
+        "software_clihub_install" => {
+            let name: String = arg(args, "name")?;
+            let output = crate::services::software::clihub::install(&name).await?;
+            json!({
+                "installed": true,
+                "name": name,
+                "output_tail": output,
+                "next": "调用 software_clihub_create_instance 把它接入为 Link 实例",
+            })
+        }
+        "software_clihub_create_instance" => {
+            let name: String = arg(args, "name")?;
+            let mcp_enabled = args
+                .get("mcp_enabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            let inst =
+                crate::services::software::clihub::create_instance(state, &name, mcp_enabled)
+                    .await?;
+            json!({"created": true, "instance": inst})
         }
         _ => unreachable!("TOOL_NAMES 与 handle 分支不同步"),
     };
