@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.4.3 (2026-10-17)
+
+### 软件对接 Link：MCP 能力域升级（@fuzhengwei）
+
+- ✨ **MCP 能力域重构为「软件对接（Link）」**：`services/mcp` 演进为 `services/software`，侧边栏与知识库页新增 Link 入口（测试功能 · 开发迭代中）；命令层、MCP handlers、服务端路由与 Admin 路由、知识访问控制同步适配
+- ✨ **OpenAPI / Swagger 规范一键导入**：新增 `services/software/openapi_import.rs`，OpenAPI 3.x / Swagger 2.0（JSON/YAML）粘贴即转为 generic_http 连接器配置——每个 operation 生成一个 MCP 工具，工具名 / 路径参数 / 查询参数 / 请求体自动映射，风险级别按方法推导（GET → read_only、DELETE → high_write），导入结果经连接器配置自检后返回
+- ✨ **MCP 对话式实例管理**：新增 `services/software/mcp_mgmt.rs`，外部 AI Agent 通过 `/mcp` 即可发现连接器、导入 OpenAPI、创建 / 更新 / 删除软件实例；删除操作要求显式 `confirm: true`，实例级工具另受审批策略（approval_mode）闸门约束
+- ✨ **CLI-Hub 社区目录集成**：接入 [CLI-Anything](https://github.com/HKUDS/CLI-Anything) 社区目录（103+ 软件），支持一键安装 + 创建实例；新增 `ClihubConnector`（`help` 探索命令面 / `run` 执行子命令双工具，子进程直接 exec 不经 shell）；hub 未安装时回退内置精选目录
+- 🎨 **软件对接页面重构**：SoftwarePage 大幅重构，实例管理与在线调试体验优化；知识库页新增「可用工具」列表与密钥试调入口（RAG 查询用 API Key、管理工具与 Wiki 用 MCP Token）
+- 🐛 **桌面端 /mcp 在线调用代理**：新增 `mcp_online_call` 命令，由 Rust 侧代理请求本机 `/mcp`（no_proxy 直连回环地址），绕开 WKWebView 对 http:// 回环地址的混合内容 / CORS 限制（TypeError: Load failed）
+
+### Qoder 流式修复（@fuzhengwei）
+
+- 🐛 **Qoder 流式解码组帧修复**：Qoder 网关信封解包后的内层 Chat chunk 原先以裸 JSON 喂给 SSE 解析器，因缺少 `data:` 前缀与记录终止符被静默丢弃，流式请求报「no message_start emitted」（非流式不受影响，Responses 流式客户端必现）；现重新组帧为 SSE 记录，并按下游协议选择内层解码器（Chat 直通合成 `[DONE]` / Responses 事件转换），网关遥测事件不再直通成垃圾帧；新增 6 个真实网关信封流形态回归测试，Responses / Chat / Messages 三下游流式全链路验证通过
+
+### 其他
+
+- 🔧 **版本号统一升级至 0.4.3**（package.json / Cargo.toml / tauri.conf.json / Cargo.lock）
+
 ## v0.4.2 (2026-10-16)
 
 ### Qoder Auth 渠道（@fuzhengwei）

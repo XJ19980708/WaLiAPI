@@ -9,7 +9,7 @@
 **把 OpenAI、Claude、DeepSeek、Gemini 等上游模型供应商统一为一个本地网关，**<br>
 **用一套密钥、一套协议、一份完整审计日志，接入 Claude Code、Codex CLI、Gemini CLI、WaLiCode 等 AI 编程工具。**
 
-[![Version](https://img.shields.io/badge/version-0.4.2-blue.svg)](./src-tauri/tauri.conf.json)
+[![Version](https://img.shields.io/badge/version-0.4.3-blue.svg)](./src-tauri/tauri.conf.json)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](#-快速开始)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app)
@@ -720,7 +720,27 @@ WaLiAPI 定位为**本地 / 内网优先**的 LLM 网关。公网部署前请先
 
 ## 📌 版本历史
 
-### v0.4.2 (2026-10-16)
+### v0.4.3 (2026-10-17)
+
+#### 软件对接 Link：MCP 能力域升级（@fuzhengwei）
+
+- ✨ **MCP 能力域重构为「软件对接（Link）」**：`services/mcp` 演进为 `services/software`，侧边栏与知识库页新增 Link 入口（测试功能 · 开发迭代中）；命令层、MCP handlers、服务端路由与 Admin 路由、知识访问控制同步适配
+- ✨ **OpenAPI / Swagger 规范一键导入**：OpenAPI 3.x / Swagger 2.0（JSON/YAML）粘贴即转为 generic_http 连接器配置，每个 operation 生成一个 MCP 工具，参数映射与风险级别自动推导，导入结果经连接器配置自检
+- ✨ **MCP 对话式实例管理**：外部 AI Agent 通过 `/mcp` 即可发现连接器、导入 OpenAPI、创建 / 更新 / 删除软件实例；删除需显式 `confirm: true`，实例级工具受审批策略闸门约束
+- ✨ **CLI-Hub 社区目录集成**：接入 CLI-Anything 社区目录（103+ 软件），一键安装 + 创建实例；新增 `ClihubConnector`（help / run 双工具）；hub 未安装时回退内置精选目录
+- 🎨 **软件对接页面重构**：SoftwarePage 大幅重构，实例管理与在线调试体验优化；知识库页新增「可用工具」列表与密钥试调入口
+- 🐛 **桌面端 /mcp 在线调用代理**：新增 `mcp_online_call` 命令由 Rust 侧代理请求本机 `/mcp`，绕开 WKWebView 对回环地址的混合内容 / CORS 限制
+
+#### Qoder 流式修复（@fuzhengwei）
+
+- 🐛 **Qoder 流式解码组帧修复**：内层 Chat chunk 原先以裸 JSON 喂给 SSE 解析器被静默丢弃，流式请求报「no message_start emitted」（非流式不受影响）；现重新组帧为 SSE 记录并按下游协议选择内层解码器，新增 6 个回归测试，Responses / Chat / Messages 三下游流式全链路验证通过
+
+#### 其他
+
+- 🔧 **版本号统一升级至 0.4.3**（package.json / Cargo.toml / tauri.conf.json / Cargo.lock）
+
+<details>
+<summary><b>v0.4.2 (2026-10-16)</b></summary>
 
 #### Qoder Auth 渠道（@fuzhengwei）
 
@@ -750,6 +770,8 @@ WaLiAPI 定位为**本地 / 内网优先**的 LLM 网关。公网部署前请先
 - 📝 **README 多语言化**：主文档顶部新增「30 秒看懂 WaLiAPI」Mermaid 架构图与产品化 Hero；新增英文、日文版本（顶部可切换）；贡献者表后置至文档末尾
 - 📝 **MCP 网关规划文档**：新增 `docs/mcp-gateway-feasibility.md` 与 `docs/mcp-gateway-plan.md`
 - 🔧 **版本号统一升级至 0.4.2**（package.json / Cargo.toml / tauri.conf.json / Cargo.lock）
+
+</details>
 
 <details>
 <summary><b>v0.4.1 (2026-10-13)</b></summary>
