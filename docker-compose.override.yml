@@ -1,0 +1,9 @@
+services:
+  waliapi:
+    networks:
+      - default
+      - proxy-net
+
+networks:
+  proxy-net:
+    external: true

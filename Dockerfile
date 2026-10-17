@@ -6,6 +6,7 @@ ARG DEBIAN_MIRROR=http://deb.debian.org/debian
 ARG DEBIAN_SECURITY_MIRROR=http://deb.debian.org/debian-security
 ARG RUSTUP_MIRROR=https://rsproxy.cn
 ARG CARGO_REGISTRY_MIRROR=sparse+https://rsproxy.cn/index/
+ARG NPM_REGISTRY=https://registry.npmjs.org/
 
 FROM ${NODE_IMAGE} AS builder
 
@@ -13,12 +14,15 @@ ARG DEBIAN_MIRROR
 ARG DEBIAN_SECURITY_MIRROR
 ARG RUSTUP_MIRROR
 ARG CARGO_REGISTRY_MIRROR
+ARG NPM_REGISTRY
 
 ENV DEBIAN_FRONTEND=noninteractive \
     RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
     RUSTUP_DIST_SERVER=${RUSTUP_MIRROR} \
     RUSTUP_UPDATE_ROOT=${RUSTUP_MIRROR}/rustup \
+    NPM_CONFIG_REGISTRY=${NPM_REGISTRY} \
+    COREPACK_NPM_REGISTRY=${NPM_REGISTRY} \
     PATH=/usr/local/cargo/bin:$PATH
 
 # libwebkit2gtk-4.1-dev 等仅为编译期依赖（tauri/wry 的 sys crate 需要 pkg-config 探测），
