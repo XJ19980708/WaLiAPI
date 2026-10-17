@@ -189,15 +189,13 @@ fn scan_sync() -> Vec<ScannedApp> {
 
     #[cfg(target_os = "windows")]
     {
+        let user_programs = std::env::var("LOCALAPPDATA")
+            .map(|d| format!("{d}\\Programs"))
+            .unwrap_or_default();
         let candidates = [
             (r"C:\Program Files", "Program Files"),
             (r"C:\Program Files (x86)", "Program Files (x86)"),
-            (
-                std::env::var("LOCALAPPDATA")
-                    .map(|d| format!("{d}\\Programs"))
-                    .unwrap_or_default(),
-                "User Programs",
-            ),
+            (user_programs.as_str(), "User Programs"),
         ];
         for (dir, source) in candidates {
             if dir.is_empty() {
