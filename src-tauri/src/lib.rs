@@ -385,6 +385,7 @@ pub fn run() {
             commands::settings::apply_theme,
             commands::settings::set_auto_start,
             commands::server::get_server_status,
+            commands::server::mcp_online_call,
             commands::server::restart_server,
             commands::security::get_builtin_security_rules,
             commands::security::update_builtin_security_rule,

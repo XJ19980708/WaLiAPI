@@ -1,6 +1,6 @@
 import { KnowledgeConnectionPanel } from "../components/KnowledgeConnectionPanel";
 import { Select } from "../components/Select";
-import { Fragment, useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { Fragment, useEffect, useState, useCallback, useRef, useMemo, type ReactNode } from "react";
 import { Link as RouterLink, useLocation } from "react-router-dom";
 import { onFileDrop, isTauriRuntime } from "../lib/runtime";
 import {
@@ -16,6 +16,7 @@ import {
   ConversationMessage,
   kbApi,
   channelApi,
+  apiKeyApi,
   settingsApi,
   serviceApi,
   serverApi,
@@ -28,7 +29,7 @@ import {
   type WikiTag,
   type ServiceStatus,
 } from "../lib/api";
-import type { Channel } from "../types";
+import type { Channel, ApiKey } from "../types";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
@@ -77,6 +78,8 @@ import {
   AlertTriangle,
   Save,
   Inbox,
+  Play,
+  KeyRound,
 } from "lucide-react";
 
 import { PromptTemplatesSection } from "../components/PromptTemplatesSection";
@@ -222,6 +225,64 @@ const TOOL_ICONS: Record<string, typeof Terminal> = {
   import_source: GitBranch,
 };
 
+/** 轻量 JSON 语法高亮（零依赖）：key 蓝、string 绿、number 琥珀、bool/null 玫红、标点灰 */
+const JSON_TOKEN_RE =
+  /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g;
+
+function HighlightedJson({ text }: { text: string }) {
+  const nodes: ReactNode[] = [];
+  const re = new RegExp(JSON_TOKEN_RE.source, "g");
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) {
+      nodes.push(
+        <span key={`p${last}`} className="text-slate-500">
+          {text.slice(last, m.index)}
+        </span>,
+      );
+    }
+    if (m[1] !== undefined) {
+      if (m[2] !== undefined) {
+        nodes.push(
+          <span key={`k${m.index}`}>
+            <span className="text-sky-700">{m[1]}</span>
+            <span className="text-slate-400">{m[2]}</span>
+          </span>,
+        );
+      } else {
+        nodes.push(
+          <span key={`s${m.index}`} className="text-emerald-700">
+            {m[1]}
+          </span>,
+        );
+      }
+    } else if (m[3] !== undefined) {
+      nodes.push(
+        <span key={`b${m.index}`} className="font-medium text-rose-600">
+          {m[3]}
+        </span>,
+      );
+    } else if (m[4] !== undefined) {
+      nodes.push(
+        <span key={`n${m.index}`} className="text-amber-600">
+          {m[4]}
+        </span>,
+      );
+    }
+    last = re.lastIndex;
+    if (m[0] === "") re.lastIndex++;
+  }
+  if (last < text.length) {
+    nodes.push(
+      <span key={`p${last}`} className="text-slate-500">
+        {text.slice(last)}
+      </span>,
+    );
+  }
+  return <>{nodes}</>;
+}
+
 function McpSection() {
   const [services, setServices] = useState<ServiceStatus[]>([]);
   const [loading, setLoading] = useState(true);
@@ -253,6 +314,121 @@ function McpSection() {
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  // ── 在线调用示例（左示例 / 右真实调用）──
+  const [mcpAuth, setMcpAuth] = useState(() => localStorage.getItem("waliapi-mcp-auth") ?? "");
+  // 密钥下拉选择：值为 API Key id 或 "manual"（手动输入 MCP Token 等）
+  const [mcpApiKeys, setMcpApiKeys] = useState<ApiKey[]>([]);
+  const [authChoice, setAuthChoice] = useState<string>(() => localStorage.getItem("waliapi-mcp-auth-choice") ?? "manual");
+  const [authLoading, setAuthLoading] = useState(false);
+  useEffect(() => {
+    apiKeyApi.getAll().then((keys) => {
+      setMcpApiKeys(keys.filter((k) => k.status === 1));
+    }).catch(() => {});
+  }, []);
+  // 选择已保存的 API Key 时自动取完整密钥填入；手动输入则保留现有值
+  useEffect(() => {
+    if (!authChoice || authChoice === "manual") return;
+    let cancelled = false;
+    setAuthLoading(true);
+    apiKeyApi.getFull(authChoice)
+      .then((full) => {
+        if (cancelled) return;
+        setMcpAuth(full);
+        localStorage.setItem("waliapi-mcp-auth", full);
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setAuthLoading(false); });
+    return () => { cancelled = true; };
+  }, [authChoice]);
+
+  const authOptions = [
+    ...mcpApiKeys.map((k) => ({
+      value: k.id,
+      label: `${k.name}（…${(k.key || "").slice(-4)}）`,
+    })),
+    { value: "manual", label: "手动输入（MCP Token 等）" },
+  ];
+  const handleAuthChoice = (v: string) => {
+    setAuthChoice(v);
+    localStorage.setItem("waliapi-mcp-auth-choice", v);
+  };
+  const [calling, setCalling] = useState(false);
+  // 最近一次响应（无需调用记录，只保留最后一次）
+  const [lastResp, setLastResp] = useState<{ ok: boolean; status: number | "err"; ms: number; time: string; response: string } | null>(null);
+
+  const curlExample = `curl -X POST ${mcpEndpoint} \\
+  -H "Authorization: Bearer $WALIAPI_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/list",
+    "params": {}
+  }'`;
+
+  const runExample = async () => {
+    const started = performance.now();
+    const time = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+    setCalling(true);
+    const rpcBody = JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method: "tools/list", params: {} });
+    let resp: { ok: boolean; status: number | "err"; ms: number; time: string; response: string };
+    try {
+      let status: number;
+      let text: string;
+      if (isTauriRuntime()) {
+        // 桌面端：Rust 侧代理请求，绕开 WKWebView 对回环地址的混合内容/CORS 限制
+        const r = await serverApi.mcpOnlineCall(mcpAuth, rpcBody);
+        status = r.status;
+        text = r.body;
+      } else {
+        // 非 Tauri 环境（浏览器同源/常规 fetch）：直接请求
+        // WebKit 对安全上下文里的 127.0.0.1 字面 IP 不豁免混合内容，fetch 用 localhost
+        const fetchEndpoint = mcpEndpoint.replace("127.0.0.1", "localhost");
+        const res = await fetch(fetchEndpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json, text/event-stream",
+            Authorization: `Bearer ${mcpAuth}`,
+          },
+          body: rpcBody,
+        });
+        status = res.status;
+        text = await res.text();
+      }
+      const ms = Math.round(performance.now() - started);
+      // SSE 响应折叠出 data: 行；纯 JSON 直接美化
+      if (text.startsWith("data:")) {
+        text = text
+          .split("\n")
+          .filter((l) => l.startsWith("data:"))
+          .map((l) => l.slice(5).trim())
+          .join("\n");
+      }
+      let ok = status >= 200 && status < 300;
+      try {
+        const parsed = JSON.parse(text);
+        ok = ok && !parsed.error;
+        text = JSON.stringify(parsed, null, 2);
+      } catch {
+        /* 非 JSON 保留原文 */
+      }
+      resp = { ok, status, ms, time, response: text };
+    } catch (e) {
+      const ms = Math.round(performance.now() - started);
+      resp = {
+        ok: false,
+        status: "err",
+        ms,
+        time,
+        response: `请求失败：${String(e)}\n\n可能原因：服务未启动或端口不正确；也可能是桌面端仍在运行旧版本（需重启使在线调用生效）。`,
+      };
+    } finally {
+      setCalling(false);
+    }
+    setLastResp(resp);
   };
 
   if (loading) {
@@ -338,49 +514,147 @@ function McpSection() {
         </div>
       </div>
 
-      {/* Available Tools */}
-      <div className="surface data-card rounded-2xl">
-        <div className="mb-4 flex items-center gap-2">
-          <Terminal size={18} className="text-slate-700" />
-          <h3 className="text-sm font-semibold text-slate-900">可用工具 ({tools.length})</h3>
-        </div>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {tools.map((tool) => {
-            const icon = TOOL_ICONS[tool.name] || Terminal;
-            const Icon = icon;
-            return (
-              <div key={tool.name} className="group flex items-start gap-3 rounded-xl border border-slate-100 bg-gradient-to-br from-white to-slate-50 px-3 py-2.5 transition-all hover:border-slate-200 hover:shadow-sm">
-                <div className="mt-0.5 flex-shrink-0 rounded-lg bg-slate-100 p-1.5 text-slate-600 transition-colors group-hover:bg-slate-200">
-                  <Icon size={14} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-semibold text-slate-800">{tool.label}</span>
-                    <code className="truncate text-[10px] font-normal text-slate-400">{tool.name}</code>
-                  </div>
-                  <p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">{tool.desc}</p>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Usage Example */}
-      <div className="surface data-card rounded-2xl">
+      {/* 调用示例：左 curl 示例 / 右在线调用 + 调用记录 */}
+      <div className="surface data-card rounded-2xl lg:col-span-2">
         <div className="mb-4 flex items-center gap-2">
           <Terminal size={18} className="text-slate-700" />
           <h3 className="text-sm font-semibold text-slate-900">调用示例</h3>
         </div>
-        <pre className="overflow-x-auto rounded-xl bg-slate-50 border border-slate-200 p-4 text-xs"><code className="text-slate-800">{`curl -X POST ${mcpEndpoint} \\
-  -H "Authorization: Bearer $WALIAPI_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "tools/list",
-    "params": {}
-  }'`}</code></pre>
+        <div className="grid gap-5 lg:grid-cols-2">
+          {/* 左：curl 示例 */}
+          <div>
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="text-xs font-medium text-slate-500">curl 示例（tools/list）</span>
+              <button
+                onClick={() => handleCopy(curlExample)}
+                className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-600"
+              >
+                {copied ? <CheckCircle2 size={12} className="text-emerald-500" /> : <Copy size={12} />}
+                复制
+              </button>
+            </div>
+            <pre className="scroll-thin max-h-72 overflow-auto rounded-xl border border-slate-200 bg-slate-50 p-3.5 font-mono text-[11px] leading-relaxed text-slate-800">
+              <code>{curlExample}</code>
+            </pre>
+            <p className="mt-2 text-[11px] leading-relaxed text-slate-400">
+              RAG 查询用「密钥」页签发的 API Key；管理工具与 Wiki 用 MCP Token。在右侧下拉选择密钥即可在本页直接试调。
+            </p>
+          </div>
+
+          {/* 右：在线调用 */}
+          <div className="flex flex-col">
+            <span className="mb-1.5 text-xs font-medium text-slate-500">在线调用（真实请求 /mcp）</span>
+            <div className="flex items-center gap-2">
+              <Select
+                size="md"
+                className="flex-1"
+                ariaLabel="选择密钥"
+                placeholder="选择 API Key"
+                value={authChoice}
+                onChange={handleAuthChoice}
+                options={authOptions}
+              />
+              <button
+                className="action-primary flex shrink-0 items-center gap-1.5 text-xs disabled:opacity-40"
+                disabled={calling || authLoading || !mcpAuth.trim()}
+                onClick={() => void runExample()}
+              >
+                {calling ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
+                {calling ? "调用中..." : "调用 tools/list"}
+              </button>
+            </div>
+            {authChoice === "manual" && (
+              <div className="relative mt-2">
+                <KeyRound size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="password"
+                  autoComplete="off"
+                  placeholder="API Key 或 MCP Token（Bearer）"
+                  className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-8 pr-2 text-xs text-slate-800 outline-none focus:border-blue-400"
+                  value={mcpAuth}
+                  onChange={(e) => {
+                    setMcpAuth(e.target.value);
+                    localStorage.setItem("waliapi-mcp-auth", e.target.value);
+                  }}
+                />
+              </div>
+            )}
+
+            {/* 最近一次响应 */}
+            <div className="mt-3">
+              <div className="mb-1.5 flex items-center gap-2 text-[11px] text-slate-400">
+                最近一次响应
+                {lastResp && (
+                  <span className="flex items-center gap-1">
+                    <span className={`h-1.5 w-1.5 rounded-full ${lastResp.ok ? "bg-emerald-500" : "bg-rose-500"}`} />
+                    <span className={lastResp.ok ? "text-emerald-600" : "text-rose-500"}>
+                      {lastResp.status === "err" ? "网络错误" : `HTTP ${lastResp.status}`}
+                    </span>
+                    <span>· {lastResp.ms}ms · {lastResp.time}</span>
+                  </span>
+                )}
+              </div>
+              {lastResp ? (
+                <pre className="scroll-thin max-h-72 overflow-auto rounded-xl border border-slate-200 bg-slate-50 p-3.5 font-mono text-[11px] leading-relaxed">
+                  <code>
+                    {lastResp.response.startsWith("{") || lastResp.response.startsWith("[") ? (
+                      <HighlightedJson text={lastResp.response} />
+                    ) : (
+                      lastResp.response
+                    )}
+                  </code>
+                </pre>
+              ) : (
+                <div className="flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-8 text-center">
+                  <Play size={16} className="text-slate-300" />
+                  <span className="text-[11px] text-slate-400">
+                    选择密钥后点击「调用 tools/list」，这里会显示真实响应
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 可用工具（表格列表） */}
+      <div className="surface data-card rounded-2xl lg:col-span-2">
+        <div className="mb-4 flex items-center gap-2">
+          <Terminal size={18} className="text-slate-700" />
+          <h3 className="text-sm font-semibold text-slate-900">可用工具 ({tools.length})</h3>
+        </div>
+        <div className="overflow-x-auto rounded-xl border border-slate-100">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-slate-50 text-slate-500">
+              <tr>
+                <th className="px-3 py-2 font-medium">工具</th>
+                <th className="px-3 py-2 font-medium">MCP 名称</th>
+                <th className="px-3 py-2 font-medium">说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tools.map((tool) => {
+                const Icon = TOOL_ICONS[tool.name] || Terminal;
+                return (
+                  <tr key={tool.name} className="border-t border-slate-100 transition-colors hover:bg-slate-50">
+                    <td className="whitespace-nowrap px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-lg bg-slate-100 p-1.5 text-slate-600">
+                          <Icon size={13} />
+                        </span>
+                        <span className="font-semibold text-slate-800">{tool.label}</span>
+                      </div>
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2">
+                      <code className="font-mono text-[11px] text-slate-400">{tool.name}</code>
+                    </td>
+                    <td className="px-3 py-2 leading-relaxed text-slate-500">{tool.desc}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

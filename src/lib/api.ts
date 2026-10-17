@@ -312,6 +312,9 @@ export const ocrApi = {
 export const serverApi = {
   getStatus: () => invoke<ServerStatus>("get_server_status"),
   restart: () => invoke<void>("restart_server"),
+  /** 在线调试 /mcp：由 Rust 侧代理请求，绕开 WKWebView 的回环地址限制 */
+  mcpOnlineCall: (auth: string, body: string) =>
+    invoke<{ status: number; body: string }>("mcp_online_call", { auth, body }),
 };
 
 // Import / Export

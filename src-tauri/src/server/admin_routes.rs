@@ -768,6 +768,14 @@ async fn dispatch(shared: &SharedState, cmd: &str, args: Value) -> Result<Value,
         "get_feature_flags" => to_json(commands::settings::get_feature_flags(state)),
         "detect_local_proxies" => to_json(commands::network::detect_local_proxies().await),
         "get_server_status" => to_json(commands::server::get_server_status(state).await),
+        "mcp_online_call" => to_json(
+            commands::server::mcp_online_call_impl(
+                state.inner(),
+                arg(&args, "auth")?,
+                arg(&args, "body")?,
+            )
+            .await,
+        ),
         #[cfg(feature = "desktop-ui")]
         "restart_server" => match shared.desktop_app {
             Some(app) => to_json(commands::server::restart_server(app.clone(), state).await),

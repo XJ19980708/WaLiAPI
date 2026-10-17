@@ -57,6 +57,9 @@ function LatencyBar({ latencyMs }: { latencyMs: number }) {
 export function ApiKeysPage() {
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [stats, setStats] = useState<Record<string, ApiKeyStats>>({});
+  // 各密钥的知识库 / Wiki 授权数量，用于卡片右侧图标的数字角标。
+  const [kbCounts, setKbCounts] = useState<Record<string, number>>({});
+  const [wikiCounts, setWikiCounts] = useState<Record<string, number>>({});
   const [showForm, setShowForm] = useState(false);
   const [knowledgeKey, setKnowledgeKey] = useState<ApiKey | null>(null);
   const [wikiKey, setWikiKey] = useState<ApiKey | null>(null);
@@ -72,6 +75,13 @@ export function ApiKeysPage() {
     ]);
     setKeys(ks);
     setStats(Object.fromEntries(st.map(s => [s.api_key_id, s])));
+    // 并行拉取每个密钥的知识库 / Wiki 授权列表，角标展示已授权数量。
+    const [kbLists, wikiLists] = await Promise.all([
+      Promise.all(ks.map(k => apiKeyApi.getKnowledgeAccess(k.id).catch(() => [] as string[]))),
+      Promise.all(ks.map(k => apiKeyApi.getWikiAccess(k.id).catch(() => [] as string[]))),
+    ]);
+    setKbCounts(Object.fromEntries(ks.map((k, i) => [k.id, kbLists[i].length])));
+    setWikiCounts(Object.fromEntries(ks.map((k, i) => [k.id, wikiLists[i].length])));
   };
 
   useEffect(() => { load(); }, []);
@@ -258,11 +268,27 @@ export function ApiKeysPage() {
                   <button onClick={() => handleToggle(k)} className="action-secondary px-3 py-2" title={k.status === 1 ? "禁用" : "启用"}>
                     <Power size={16} className={k.status === 1 ? "text-emerald-300" : "text-zinc-400"} />
                   </button>
-                  <button onClick={() => setKnowledgeKey(k)} className="action-secondary px-3 py-2" title="知识库查询权限" aria-label={`配置 ${k.name} 的知识库查询权限`}>
+                  <button onClick={() => setKnowledgeKey(k)} className="relative action-secondary px-3 py-2" title="知识库查询权限" aria-label={`配置 ${k.name} 的知识库查询权限，已授权 ${(kbCounts[k.id] ?? 0)} 个知识库`}>
                     <Database size={16} />
+                    {(kbCounts[k.id] ?? 0) > 0 && (
+                      <span
+                        className="absolute -right-1.5 -top-1.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[#2f6fed] px-1 text-[10px] font-semibold leading-none text-white shadow-sm"
+                        title={`已授权 ${kbCounts[k.id]} 个知识库`}
+                      >
+                        {kbCounts[k.id] > 99 ? "99+" : kbCounts[k.id]}
+                      </span>
+                    )}
                   </button>
-                  <button onClick={() => setWikiKey(k)} className="action-secondary px-3 py-2" title="Wiki 查询权限" aria-label={`配置 ${k.name} 的 Wiki 查询权限`}>
+                  <button onClick={() => setWikiKey(k)} className="relative action-secondary px-3 py-2" title="Wiki 查询权限" aria-label={`配置 ${k.name} 的 Wiki 查询权限，已授权 ${(wikiCounts[k.id] ?? 0)} 个 Wiki 项目`}>
                     <BookOpen size={16} />
+                    {(wikiCounts[k.id] ?? 0) > 0 && (
+                      <span
+                        className="absolute -right-1.5 -top-1.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[#2f6fed] px-1 text-[10px] font-semibold leading-none text-white shadow-sm"
+                        title={`已授权 ${wikiCounts[k.id]} 个 Wiki 项目`}
+                      >
+                        {wikiCounts[k.id] > 99 ? "99+" : wikiCounts[k.id]}
+                      </span>
+                    )}
                   </button>
                   <button onClick={() => setEditKey(k)} className="action-secondary px-3 py-2" title="编辑">
                     <Pencil size={16} />
@@ -292,8 +318,8 @@ export function ApiKeysPage() {
         />
       )}
 
-      {knowledgeKey && <KnowledgeAccessDialog apiKey={knowledgeKey} onClose={() => setKnowledgeKey(null)} />}
-      {wikiKey && <WikiAccessDialog apiKey={wikiKey} onClose={() => setWikiKey(null)} />}
+      {knowledgeKey && <KnowledgeAccessDialog apiKey={knowledgeKey} onClose={() => { setKnowledgeKey(null); load(); }} />}
+      {wikiKey && <WikiAccessDialog apiKey={wikiKey} onClose={() => { setWikiKey(null); load(); }} />}
       <DeleteConfirmDialog
         target={deleteTarget}
         onClose={() => setDeleteTarget(null)}
