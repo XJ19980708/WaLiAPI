@@ -171,7 +171,11 @@ async fn try_ocr_with_channel(
         .await
         .map_err(|e| format!("Parse response failed: {}", e))?;
 
-    // 响应解析：claude 为 content[] 文本块数组；OpenAI 为 choices[0].message.content（兼容多段数组）
+    // 响应解析：claude 为 content[] 文本块数组；OpenAI 为 choices[0].message.content。
+    // 实测盲区修复（用户案例"0 字符"根因之一）：
+    //   - content 为 null 且正文在 reasoning_content（thinking 类视觉模型）→ 兜底取
+    //   - content 数组元素字段为 output_text（Responses 风格）→ 兼容
+    //   - 补全风格 choices[0].text → 兜底
     let content = if is_claude {
         json.get("content")
             .and_then(|c| c.as_array())
@@ -186,24 +190,65 @@ async fn try_ocr_with_channel(
             .trim()
             .to_string()
     } else {
-        match json.pointer("/choices/0/message/content") {
-            Some(serde_json::Value::String(s)) => s.trim().to_string(),
-            Some(serde_json::Value::Array(parts)) => parts
-                .iter()
-                .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
-                .collect::<Vec<_>>()
-                .join("")
-                .trim()
-                .to_string(),
-            _ => String::new(),
+        let mut text = String::new();
+        if let Some(msg) = json.pointer("/choices/0/message") {
+            match msg.get("content") {
+                Some(serde_json::Value::String(s)) => text = s.clone(),
+                Some(serde_json::Value::Array(parts)) => {
+                    text = parts
+                        .iter()
+                        .filter_map(|p| {
+                            p.get("text")
+                                .and_then(|t| t.as_str())
+                                .or_else(|| p.get("output_text").and_then(|t| t.as_str()))
+                        })
+                        .collect::<Vec<_>>()
+                        .join("");
+                }
+                _ => {}
+            }
+            // content 空 → 兜底 reasoning_content（thinking 模型正文可能在推理字段）
+            if text.trim().is_empty() {
+                if let Some(rc) = msg.get("reasoning_content").and_then(|v| v.as_str()) {
+                    text = rc.to_string();
+                }
+            }
         }
+        // 仍空 → 补全风格 choices[0].text
+        if text.trim().is_empty() {
+            if let Some(t) = json.pointer("/choices/0/text").and_then(|v| v.as_str()) {
+                text = t.to_string();
+            }
+        }
+        text.trim().to_string()
     };
 
-    // 空内容或过短视为识别失败（触发重试/failover）
-    if content.chars().count() < 10 {
+    // 空内容或过短视为识别失败（触发重试/failover）。
+    // 判定阈值：**超过 4 个中文字即算成功**（用户实测：图文页 VLM 能识别出 20+ 中文字，
+    // 但旧判定按"总字符 <10"误判失败——第 6 页 OCR_PAGE_FAILED 案例）。
+    // 兼容纯英文页：有效字符（非空白/符号）≥20 也视为成功。
+    let cjk_count = content
+        .chars()
+        .filter(|c| {
+            matches!(
+                *c as u32,
+                0x4E00..=0x9FFF | 0x3400..=0x4DBF | 0xF900..=0xFAFF | 0x3040..=0x30FF
+            )
+        })
+        .count();
+    let valid_count = content
+        .chars()
+        .filter(|c| !c.is_whitespace() && !c.is_ascii_punctuation())
+        .count();
+    if cjk_count <= 4 && valid_count < 20 {
+        // 带响应摘要：若仍判失败，用户可从页面/日志直接看到模型真实返回结构（诊断解析盲区）
+        let raw = json.to_string();
+        let digest: String = raw.chars().take(160).collect::<String>().replace('\n', " ");
         return Err(format!(
-            "识别结果为空或过短（{} 字符）",
-            content.chars().count()
+            "识别结果为空或过短（总 {} 字符，中文 {} 字；响应摘要: {}）",
+            content.chars().count(),
+            cjk_count,
+            digest
         ));
     }
 
