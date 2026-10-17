@@ -99,6 +99,10 @@ pub struct Database {
 /// v0.1.1 → v0.1.3 迁移文件变更：
 /// - 005_add_response_choices.sql → 005_add_response_choices_and_seq.sql（内容变更）
 /// - 007 文件可能被本地修改过（description 不匹配）
+/// - 051/052：0.4.2 迁移重排后在文件头部追加了兼容说明注释（commit 5977100），
+///   导致在注释追加前已应用这两个迁移的升级库 checksum 不匹配 → VersionMismatch(51)
+///   启动 panic 闪退。内容差异仅为注释，schema 效果由 ensure_wiki_schema_columns
+///   幂等兜底，因此直接对齐 checksum 安全。
 ///
 /// 此函数在 sqlx::migrate 之前运行，将旧 checksum 更新为当前文件的 checksum。
 /// 仅更新已有记录，不会跳过任何迁移。
@@ -112,8 +116,19 @@ async fn fix_legacy_migration_checksums(pool: &SqlitePool) {
     let migration_007 = include_str!("../../migrations/007_fix_log_seq.sql");
     let checksum_007: Vec<u8> = sha2::Sha384::digest(migration_007.as_bytes()).to_vec();
 
-    // 更新 version=5 和 version=7 的 checksum（BLOB 类型），使其匹配当前文件
-    for (version, new_checksum) in [(5i64, checksum_005), (7i64, checksum_007)] {
+    let migration_051 = include_str!("../../migrations/051_wiki_pdf_ocr.sql");
+    let checksum_051: Vec<u8> = sha2::Sha384::digest(migration_051.as_bytes()).to_vec();
+
+    let migration_052 = include_str!("../../migrations/052_wiki_kb_reasoning_temperature.sql");
+    let checksum_052: Vec<u8> = sha2::Sha384::digest(migration_052.as_bytes()).to_vec();
+
+    // 更新对应 version 的 checksum（BLOB 类型），使其匹配当前文件
+    for (version, new_checksum) in [
+        (5i64, checksum_005),
+        (7i64, checksum_007),
+        (51i64, checksum_051),
+        (52i64, checksum_052),
+    ] {
         let result = sqlx::query(
             "UPDATE _sqlx_migrations SET checksum = ? WHERE version = ? AND checksum != ?",
         )
@@ -216,14 +231,18 @@ pub async fn ensure_wiki_schema_columns(pool: &sqlx::SqlitePool) -> Result<(), S
             .fetch_all(pool)
             .await
             .map_err(|e| format!("读取 {table} 列定义失败: {e}"))?;
-        let exists = rows
-            .iter()
-            .any(|r| r.try_get::<String, _>("name").map(|n| n == *column).unwrap_or(false));
+        let exists = rows.iter().any(|r| {
+            r.try_get::<String, _>("name")
+                .map(|n| n == *column)
+                .unwrap_or(false)
+        });
         if !exists {
-            sqlx::query(&format!("ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
-                .execute(pool)
-                .await
-                .map_err(|e| format!("补齐 {table}.{column} 失败: {e}"))?;
+            sqlx::query(&format!(
+                "ALTER TABLE {table} ADD COLUMN {column} {col_type}"
+            ))
+            .execute(pool)
+            .await
+            .map_err(|e| format!("补齐 {table}.{column} 失败: {e}"))?;
             log::info!("已补齐列 {table}.{column} ({col_type})");
         }
     }
@@ -278,13 +297,12 @@ async fn backfill_reranked_migrations(pool: &sqlx::SqlitePool) -> Result<(), Str
             continue; // 同编号但不是我的旧迁移（如上游 request_log 迁移）→ 不动
         }
 
-        let new_exists: Option<(i64,)> = sqlx::query_as(
-            "SELECT 1 FROM _sqlx_migrations WHERE version = ? AND success = 1",
-        )
-        .bind(new_version)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| format!("读取迁移记录失败: {e}"))?;
+        let new_exists: Option<(i64,)> =
+            sqlx::query_as("SELECT 1 FROM _sqlx_migrations WHERE version = ? AND success = 1")
+                .bind(new_version)
+                .fetch_optional(pool)
+                .await
+                .map_err(|e| format!("读取迁移记录失败: {e}"))?;
         if new_exists.is_some() {
             // 新编号已存在 → 删除旧的重复记录（内容等价）
             sqlx::query("DELETE FROM _sqlx_migrations WHERE version = ?")
@@ -309,7 +327,9 @@ async fn backfill_reranked_migrations(pool: &sqlx::SqlitePool) -> Result<(), Str
         .execute(pool)
         .await
         .map_err(|e| format!("重编号迁移记录失败（{old_version}→{new_version}）: {e}"))?;
-        log::info!("已把旧迁移记录 {old_version} 重编号为新版本 {new_version}（防 VersionMismatch 闪退）");
+        log::info!(
+            "已把旧迁移记录 {old_version} 重编号为新版本 {new_version}（防 VersionMismatch 闪退）"
+        );
     }
     Ok(())
 }
@@ -1068,6 +1088,75 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count, 2);
+        pool.close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// 0.4.2 升级库兼容：051/052 在注释追加（commit 5977100）之前已应用的库，
+    /// _sqlx_migrations 记录的是旧文件的 checksum，直接跑迁移会 VersionMismatch(51)
+    /// 启动 panic。修复后 checksum 应与当前文件对齐，迁移可正常完成。
+    #[tokio::test]
+    async fn test_fix_reranked_migration_checksums() {
+        let dir = temp_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("reranked-checksum.db");
+        let pool = test_pool(&db_path).await;
+
+        // 按当前迁移集正常应用全部迁移（模拟已升级到 0.4.2 的库）
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+        // 把 51/52 的 checksum 回写成注释追加前的旧值（真实升级库现场，
+        // 旧值取自 commit 064b6d3 版本迁移文件的 SHA-384）
+        let old_051 = hex::decode(
+            "e2c772ff918bb12b80a1cfaca111980875680e95584701a16fff9384ade5f6b5fb30cc5b76cdf4bd07ac6cc7d9e600a4",
+        )
+        .unwrap();
+        let old_052 = hex::decode(
+            "805e2256220d25344336ad1ae22c2d5c130396d8dfe67bb32c46a55dd0fc3244c00be8674fa575004d1d1e537ce2db6b",
+        )
+        .unwrap();
+        for (version, old) in [(51i64, old_051), (52i64, old_052)] {
+            sqlx::query("UPDATE _sqlx_migrations SET checksum = ? WHERE version = ?")
+                .bind(&old)
+                .bind(version)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        // 未修复前 migrate 应报 VersionMismatch
+        let before = sqlx::migrate!("./migrations").run(&pool).await;
+        assert!(before.is_err(), "旧 checksum 未修复时迁移应失败");
+
+        // 执行 checksum 兼容修复
+        fix_legacy_migration_checksums(&pool).await;
+
+        // 修复后 checksum 与当前迁移文件一致，迁移可正常跑完
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("修复后迁移应成功");
+
+        let migrator = sqlx::migrate!("./migrations");
+        for version in [51i64, 52i64] {
+            let stored: Vec<u8> =
+                sqlx::query_scalar("SELECT checksum FROM _sqlx_migrations WHERE version = ?")
+                    .bind(version)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            let current = migrator
+                .iter()
+                .find(|m| m.version == version)
+                .unwrap()
+                .checksum
+                .to_vec();
+            assert_eq!(
+                stored, current,
+                "版本 {version} 的 checksum 应已对齐当前文件"
+            );
+        }
+
         pool.close().await;
         std::fs::remove_dir_all(dir).unwrap();
     }
