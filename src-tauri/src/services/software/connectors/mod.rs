@@ -46,6 +46,35 @@ pub fn valid_tool_name(name: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 
+/// 参数名校验：作为 JSON key / 模板占位符须为安全标识符。
+/// 比工具短名宽松——允许驼峰（OpenAPI 常见 `taskId` / `petId`）。
+pub fn valid_param_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 50
+        && name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+        && name
+            .chars()
+            .all(|c: char| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// 提取模板字符串中的 `{{name}}` 占位符（按出现顺序，去重）。
+pub fn template_placeholders(template: &str) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    let mut rest = template;
+    while let Some(start) = rest.find("{{") {
+        let after = &rest[start + 2..];
+        let Some(end) = after.find("}}") else {
+            break;
+        };
+        let name = after[..end].trim();
+        if valid_param_name(name) && !out.iter().any(|s| s == name) {
+            out.push(name.to_string());
+        }
+        rest = &after[end + 2..];
+    }
+    out
+}
+
 /// 由 params 声明构建 JSON Schema（inputSchema）。
 /// param: `{ "name": "...", "description": "...", "required": bool }`。
 pub fn build_input_schema(params: &serde_json::Value) -> serde_json::Value {
@@ -56,7 +85,7 @@ pub fn build_input_schema(params: &serde_json::Value) -> serde_json::Value {
             let Some(name) = p.get("name").and_then(|v| v.as_str()) else {
                 continue;
             };
-            if !valid_tool_name(name) {
+            if !valid_param_name(name) {
                 continue;
             }
             let description = p
@@ -90,7 +119,7 @@ pub fn param_names(params: &serde_json::Value) -> Vec<String> {
         .map(|list| {
             list.iter()
                 .filter_map(|p| p.get("name").and_then(|v| v.as_str()))
-                .filter(|n| valid_tool_name(n))
+                .filter(|n| valid_param_name(n))
                 .map(|n| n.to_string())
                 .collect()
         })

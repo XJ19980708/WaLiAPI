@@ -610,7 +610,9 @@ async fn mcp_limits_tools_exposure_and_legacy_sessions() {
             .unwrap(),
     )
     .await;
-    assert_eq!(result["result"]["tools"].as_array().unwrap().len(), 5);
+    // 5 个 RAG 查询工具 + 7 个 software_* 管理工具（产品约定：API Key 默认可操作
+    // software 能力域）；破坏性 KB 工具仍不可见。setup 无软件实例，动态工具为 0。
+    assert_eq!(result["result"]["tools"].as_array().unwrap().len(), 12);
     assert!(!result.to_string().contains("delete_knowledge_base"));
     let result = body(
         app.clone()

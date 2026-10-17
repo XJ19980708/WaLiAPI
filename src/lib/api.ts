@@ -763,4 +763,10 @@ export const softwareApi = {
   getLogs: (instanceId?: number, limit?: number) =>
     invoke<SoftwareToolLog[]>("get_software_tool_logs", { instanceId, limit }),
   scan: () => invoke<ScannedApp[]>("scan_installed_software"),
+  /** OpenAPI/Swagger 规范导入：返回 { config, tool_count, skipped } */
+  importOpenapi: (spec: string, baseUrl?: string) =>
+    invoke<{ config: Record<string, unknown>; tool_count: number; skipped: string[] }>(
+      "import_openapi",
+      { spec, base_url: baseUrl || undefined },
+    ),
 };

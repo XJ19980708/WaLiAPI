@@ -89,7 +89,8 @@ async fn instance_manifests(
     }
 }
 
-/// 实例 slug：实例名清洗为 `[a-z0-9_]`，非 ASCII 字符归一为 `_`，末尾拼 `_id` 保证唯一。
+/// 实例 slug：实例名清洗为 `[a-z0-9_]`，非 ASCII 字符归一为 `_`（连续下划线折叠，
+/// 中文实例名如「Todo 待办服务（MCP 配置）」→ `todo_mcp` 而非一长串下划线），末尾拼 `_id` 保证唯一。
 pub fn instance_slug(name: &str, id: i64) -> String {
     let mut slug = String::new();
     for c in name.chars() {
@@ -97,7 +98,7 @@ pub fn instance_slug(name: &str, id: i64) -> String {
             slug.push(c);
         } else if c.is_ascii_uppercase() {
             slug.push(c.to_ascii_lowercase());
-        } else {
+        } else if !slug.ends_with('_') {
             slug.push('_');
         }
     }

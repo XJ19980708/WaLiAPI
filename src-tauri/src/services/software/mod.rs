@@ -14,7 +14,9 @@ pub mod connectors;
 pub mod executor;
 pub mod mcp_bridge;
 pub mod mcp_client;
+pub mod mcp_mgmt;
 pub mod model;
+pub mod openapi_import;
 pub mod repository;
 pub mod scan;
 

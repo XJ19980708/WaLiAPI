@@ -24,7 +24,7 @@
 use super::super::connector::{RiskLevel, ToolManifest};
 use super::super::executor;
 use super::super::model::SoftwareInstance;
-use super::{build_input_schema, valid_tool_name};
+use super::{build_input_schema, template_placeholders, valid_tool_name};
 use crate::services::software::connector::SoftwareConnector;
 use async_trait::async_trait;
 use std::time::Duration;
@@ -80,10 +80,38 @@ fn manifest_for(entry: &serde_json::Value) -> Result<ToolManifest, String> {
         .get("params")
         .cloned()
         .unwrap_or(serde_json::json!([]));
+    let mut input_schema = build_input_schema(&params);
+    // 路径模板占位符（如 /tasks/{{taskId}}）自动登记为必填参数：
+    // 调用方按 schema 传参后，executor 才能完成 URL 模板渲染
+    let path_tpl = entry.get("path").and_then(|v| v.as_str()).unwrap_or("");
+    for ph in template_placeholders(path_tpl) {
+        let props = input_schema
+            .get_mut("properties")
+            .and_then(|v| v.as_object_mut())
+            .expect("build_input_schema 必产出 properties");
+        props
+            .entry(ph.clone())
+            .or_insert_with(|| {
+                serde_json::json!({
+                    "type": "string",
+                    "description": format!("路径参数 {ph}（必填）"),
+                })
+            });
+        let required = input_schema
+            .as_object_mut()
+            .unwrap()
+            .entry("required")
+            .or_insert_with(|| serde_json::json!([]));
+        if let Some(arr) = required.as_array_mut() {
+            if !arr.iter().any(|x| x.as_str() == Some(ph.as_str())) {
+                arr.push(serde_json::json!(ph));
+            }
+        }
+    }
     Ok(ToolManifest {
         name: name.to_string(),
         description: description.to_string(),
-        input_schema: build_input_schema(&params),
+        input_schema,
         risk,
     })
 }
@@ -299,4 +327,68 @@ fn urlencoding_encode(input: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn instance(config: serde_json::Value) -> SoftwareInstance {
+        SoftwareInstance {
+            id: 1,
+            connector_id: "generic_http".into(),
+            name: "t".into(),
+            config,
+            mcp_enabled: 1,
+            approval_mode: "auto".into(),
+            enabled: 1,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn path_placeholder_becomes_required_schema_property() {
+        let inst = instance(serde_json::json!({
+            "base_url": "http://127.0.0.1:1",
+            "endpoints": [
+                {
+                    "tool": "get_task",
+                    "description": "按 ID 查询",
+                    "method": "GET",
+                    "path": "/tasks/{{taskId}}",
+                    "risk": "read_only"
+                }
+            ]
+        }));
+        let tools = GenericHttpConnector.list_tools(&inst).await.unwrap();
+        assert_eq!(tools.len(), 1);
+        let schema = tools[0].input_schema.clone();
+        let props = schema["properties"].as_object().unwrap();
+        assert!(props.contains_key("taskId"), "占位符应出现在 properties: {schema}");
+        let required = schema["required"].as_array().unwrap();
+        assert!(required.iter().any(|v| v == "taskId"));
+    }
+
+    #[tokio::test]
+    async fn camel_case_query_param_kept_in_schema() {
+        let inst = instance(serde_json::json!({
+            "base_url": "http://127.0.0.1:1",
+            "endpoints": [
+                {
+                    "tool": "list_items",
+                    "description": "列表",
+                    "method": "GET",
+                    "path": "/items",
+                    "risk": "read_only",
+                    "params": [
+                        {"name": "sortBy", "in": "query", "description": "排序字段"}
+                    ]
+                }
+            ]
+        }));
+        let tools = GenericHttpConnector.list_tools(&inst).await.unwrap();
+        let props = tools[0].input_schema["properties"].as_object().unwrap();
+        assert!(props.contains_key("sortBy"), "驼峰 query 参数不应被丢弃: {props:?}");
+    }
 }

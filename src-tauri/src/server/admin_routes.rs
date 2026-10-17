@@ -1060,6 +1060,46 @@ async fn dispatch(shared: &SharedState, cmd: &str, args: Value) -> Result<Value,
             to_json(commands::app_config::open_config_folder(arg(&args, "appName")?).await)
         }
 
+        // ── 软件对接（Link）：与桌面 invoke 语义一致，Web 面板/headless 必须可达 ──
+        "get_software_instances" => {
+            to_json(commands::software::get_software_instances(state).await)
+        }
+        "get_software_connector_catalog" => {
+            to_json(commands::software::get_software_connector_catalog().await)
+        }
+        "create_software_instance" => {
+            to_json(commands::software::create_software_instance(state, arg(&args, "input")?).await)
+        }
+        "update_software_instance" => {
+            to_json(commands::software::update_software_instance(state, arg(&args, "input")?).await)
+        }
+        "toggle_software_instance" => to_json(
+            commands::software::toggle_software_instance(
+                state,
+                arg(&args, "id")?,
+                arg(&args, "enabled")?,
+            )
+            .await,
+        ),
+        "delete_software_instance" => {
+            to_json(commands::software::delete_software_instance(state, arg(&args, "id")?).await)
+        }
+        "get_software_instance_tools" => {
+            to_json(commands::software::get_software_instance_tools(state, arg(&args, "id")?).await)
+        }
+        "get_software_tool_logs" => to_json(
+            commands::software::get_software_tool_logs(
+                state,
+                arg(&args, "instanceId")?,
+                arg(&args, "limit")?,
+            )
+            .await,
+        ),
+        "scan_installed_software" => to_json(commands::software::scan_installed_software().await),
+        "import_openapi" => to_json(
+            commands::software::import_openapi(arg(&args, "spec")?, arg(&args, "base_url")?).await,
+        ),
+
         _ => Err(format!("未知命令: {cmd}")),
     }
 }

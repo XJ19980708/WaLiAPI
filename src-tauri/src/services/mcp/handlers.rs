@@ -46,7 +46,13 @@ RAG 已预建索引：文档已解析、分块、向量化并存入本地 SQLite
 ## 代码文件
 
 RAG 中的代码文件按符号边界分块（函数/类/方法），每个 chunk 是完整符号。
-chunk metadata 包含 symbol_name、symbol_kind、signature，可用于精确过滤。"#;
+chunk metadata 包含 symbol_name、symbol_kind、signature，可用于精确过滤。
+
+## Link 软件对接配置（software_* 管理工具）
+
+用户想接入软件/API 时，可通过 software_list_connectors → software_import_openapi
+（HTTP API 场景）→ software_create_instance 的流程对话式完成配置；
+删除实例必须先获用户明确确认再传 confirm=true。"#;
 
 // ── Session management for SSE transport ──────────────────────────
 // Each SSE client gets a unique session_id. The POST handler uses
@@ -119,7 +125,7 @@ impl McpResponse {
 // ── MCP tool definitions ──────────────────────────────────────────
 
 pub(crate) fn get_tools() -> Vec<serde_json::Value> {
-    vec![
+    let mut tools: Vec<serde_json::Value> = vec![
         // ── Read-only tools (existing) ───────────────────────────
         serde_json::json!({
             "name": "search_knowledge_base",
@@ -551,7 +557,11 @@ pub(crate) fn get_tools() -> Vec<serde_json::Value> {
             props.insert("diagnostics".into(), serde_json::json!({"type":"boolean","default":false,"description":"仅普通 API Key 可启用真实权限及阶段诊断。"}));
         }
         tool
-    }).collect()
+    }).collect();
+    // Link 管理工具：AI Agent 对话式配置软件对接实例（API Key 与全量模式均可达）。
+    // 定义见 services/software/mcp_mgmt.rs。
+    tools.extend(crate::services::software::mcp_mgmt::tool_defs());
+    tools
 }
 
 // ── Core JSON-RPC dispatch ────────────────────────────────────────
@@ -597,7 +607,7 @@ async fn dispatch_scoped(
             }),
         ),
         "tools/list" => {
-            let tools: Vec<_> = get_tools()
+            let mut tools: Vec<_> = get_tools()
                 .into_iter()
                 .filter(|tool| {
                     let name = tool["name"].as_str().unwrap_or("");
@@ -654,10 +664,44 @@ async fn dispatch_scoped(
                     tool
                 })
                 .collect();
+            // 软件对接（Link）：API Key 默认可操作——管理工具 + 已启用实例的动态工具
+            // （产品约定：API Key 与 MCP Token 同权访问 software 能力域；
+            //   实例级审批闸门仍在 mcp_bridge::call_tool 内生效）
+            tools.extend(crate::services::software::mcp_mgmt::tool_defs());
+            tools.extend(
+                crate::services::software::mcp_bridge::list_enabled_tools(&shared.state.db.pool)
+                    .await,
+            );
             McpResponse::success(req.id.clone(), serde_json::json!({"tools": tools}))
         }
         "tools/call" => {
             let name = req.params["name"].as_str().unwrap_or("");
+            // 软件对接：API Key 默认可操作（实例工具 + 管理工具），与全量模式同一路径
+            if name.starts_with("software__") {
+                return match crate::services::software::mcp_bridge::call_tool(
+                    &shared.state,
+                    name,
+                    &req.params["arguments"],
+                )
+                .await
+                {
+                    Ok(v) => McpResponse::success(req.id.clone(), v),
+                    Err(e) => McpResponse::error(req.id.clone(), -32603, e),
+                };
+            }
+            if crate::services::software::mcp_mgmt::TOOL_NAMES.contains(&name) {
+                return match crate::services::software::mcp_mgmt::try_handle(
+                    &shared.state,
+                    name,
+                    &req.params["arguments"],
+                )
+                .await
+                {
+                    Some(Ok(v)) => McpResponse::success(req.id.clone(), v),
+                    Some(Err(e)) => McpResponse::error(req.id.clone(), -32603, e),
+                    None => McpResponse::error(req.id.clone(), -32601, "Unknown tool".into()),
+                };
+            }
             if !QUERY_TOOLS.contains(&name) && !WIKI_QUERY_TOOLS.contains(&name) {
                 return McpResponse::error(
                     req.id.clone(),
@@ -1087,10 +1131,18 @@ async fn handle_tool_call(
     let pool = &shared.state.db.pool;
 
     // 软件对接工具（software__ 命名空间）→ software 能力域分发。
-    // 仅 MCP token 全量模式可达：scoped 白名单不含 software__ 前缀，天然隔离。
+    // API Key（scoped）与 MCP token 全量模式均可达（scoped 在 dispatch_scoped 内单独分发）。
     if tool_name.starts_with("software__") {
         return crate::services::software::mcp_bridge::call_tool(&shared.state, tool_name, args)
             .await;
+    }
+
+    // Link 管理工具：AI Agent 通过 /mcp 对话式配置软件对接实例（连接器发现 /
+    // OpenAPI 导入 / 实例增删改查）。API Key（scoped）与全量模式均可达。
+    if let Some(result) =
+        crate::services::software::mcp_mgmt::try_handle(&shared.state, tool_name, args).await
+    {
+        return result;
     }
 
     match tool_name {

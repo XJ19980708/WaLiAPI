@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { AppWindow, Plus, RefreshCw, Trash2, Pencil, Terminal, Globe, ScanSearch, Check, Link as LinkIcon } from "lucide-react";
+import { AppWindow, Plus, RefreshCw, Trash2, Pencil, Terminal, Globe, ScanSearch, Check, Link as LinkIcon, FileJson } from "lucide-react";
 import { softwareApi, serverApi } from "../lib/api";
 import { Select } from "../components/Select";
 import type {
@@ -83,6 +83,13 @@ export function SoftwareSection() {
   const [expandedTools, setExpandedTools] = useState<number | null>(null);
   const [toolPreviews, setToolPreviews] = useState<Record<number, SoftwareToolPreview[]>>({});
 
+  // OpenAPI/Swagger 导入（generic_http 专用）
+  const [oaSpec, setOaSpec] = useState("");
+  const [oaBaseUrl, setOaBaseUrl] = useState("");
+  const [oaImporting, setOaImporting] = useState(false);
+  const [oaNotice, setOaNotice] = useState("");
+  const [oaOpen, setOaOpen] = useState(false);
+
   // 本机扫描
   const [scanOpen, setScanOpen] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -117,11 +124,19 @@ export function SoftwareSection() {
 
   const openCreate = (connectorId: string) => {
     setError("");
+    setOaSpec("");
+    setOaBaseUrl("");
+    setOaNotice("");
+    setOaOpen(false);
     setEditor(emptyEditor(connectorId, connectorSample(connectorId)));
   };
 
   const openEdit = (inst: SoftwareInstance) => {
     setError("");
+    setOaSpec("");
+    setOaBaseUrl("");
+    setOaNotice("");
+    setOaOpen(false);
     setEditor({
       id: inst.id,
       connectorId: inst.connector_id,
@@ -130,6 +145,27 @@ export function SoftwareSection() {
       approvalMode: inst.approval_mode,
       mcpEnabled: inst.mcp_enabled === 1,
     });
+  };
+
+  /** OpenAPI/Swagger 导入：服务端转换 generic_http 配置并回填编辑器 */
+  const runOpenapiImport = async () => {
+    if (!editor || !oaSpec.trim()) return;
+    setError("");
+    setOaNotice("");
+    setOaImporting(true);
+    try {
+      const out = await softwareApi.importOpenapi(oaSpec, oaBaseUrl.trim() || undefined);
+      setEditor({ ...editor, configText: JSON.stringify(out.config, null, 2) });
+      setOaNotice(
+        `导入成功：${out.tool_count} 个工具已生成配置` +
+          (out.skipped.length ? `，${out.skipped.length} 项被跳过` : "") +
+          "。请核对后保存。",
+      );
+    } catch (e) {
+      setError(`OpenAPI 导入失败: ${String(e)}`);
+    } finally {
+      setOaImporting(false);
+    }
   };
 
   const save = async () => {
@@ -581,6 +617,50 @@ export function SoftwareSection() {
                   onChange={(e) => setEditor({ ...editor, name: e.target.value })}
                 />
               </div>
+
+              {editor.connectorId === "generic_http" && (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                  <button
+                    className="flex w-full items-center justify-between text-xs font-medium text-slate-600"
+                    onClick={() => setOaOpen((v) => !v)}
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <FileJson size={14} className="text-blue-500" />
+                      从 OpenAPI / Swagger 导入（免手写 JSON）
+                    </span>
+                    <span className="text-slate-400">{oaOpen ? "收起" : "展开"}</span>
+                  </button>
+                  {oaOpen && (
+                    <div className="mt-3 space-y-2">
+                      <textarea
+                        className="h-32 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 font-mono text-[11px] leading-relaxed text-slate-900 outline-none focus:border-blue-400"
+                        placeholder="粘贴 OpenAPI 3.x / Swagger 2.0 文档全文（JSON 或 YAML），或让 AI Agent 通过 /mcp 的 software_import_openapi 工具自动完成"
+                        value={oaSpec}
+                        onChange={(e) => setOaSpec(e.target.value)}
+                        spellCheck={false}
+                      />
+                      <div className="flex items-center gap-2">
+                        <input
+                          className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 outline-none focus:border-blue-400"
+                          placeholder="可选：base_url 覆盖（规范内 servers 为相对地址时必填）"
+                          value={oaBaseUrl}
+                          onChange={(e) => setOaBaseUrl(e.target.value)}
+                        />
+                        <button
+                          className="action-secondary whitespace-nowrap text-xs"
+                          disabled={oaImporting || !oaSpec.trim()}
+                          onClick={() => void runOpenapiImport()}
+                        >
+                          {oaImporting ? "导入中..." : "导入生成配置"}
+                        </button>
+                      </div>
+                      {oaNotice && (
+                        <p className="text-xs text-emerald-600">{oaNotice}</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div>
                 <div className="mb-1 flex items-center justify-between">

@@ -465,6 +465,7 @@ pub fn run() {
             commands::software::get_software_instance_tools,
             commands::software::get_software_tool_logs,
             commands::software::scan_installed_software,
+            commands::software::import_openapi,
         ])
         .build(tauri::generate_context!())
         .expect("error while building WaLiAPI")
