@@ -1,6 +1,6 @@
 import { KnowledgeConnectionPanel } from "../components/KnowledgeConnectionPanel";
 import { Select } from "../components/Select";
-import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { Fragment, useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { Link as RouterLink, useLocation } from "react-router-dom";
 import { onFileDrop, isTauriRuntime } from "../lib/runtime";
 import {
@@ -156,8 +156,8 @@ export function KnowledgeBasePage() {
   const serviceTabs: { key: ServiceTab; label: string; icon: typeof BookOpen }[] = [
     { key: "knowledge", label: "RAG", icon: BookOpen },
     { key: "wiki", label: "Wiki", icon: Network },
+    { key: "software", label: "Software", icon: AppWindow },
     { key: "mcp", label: "MCP", icon: Terminal },
-    { key: "software", label: "软件", icon: AppWindow },
     { key: "skills", label: "Skills", icon: Puzzle },
     { key: "prompts", label: "Prompt 模板", icon: FileText },
   ];
@@ -165,25 +165,34 @@ export function KnowledgeBasePage() {
   return (
     <div className="page-shell space-y-6">
       {/* Page Header */}
-      <div className="page-header sticky top-0 z-30 -mx-7 -mt-7 mb-2 bg-white/90 px-7 py-5 backdrop-blur-md border-b border-slate-100" ref={headerRef}>
-        <div>
+      <div className="page-header sticky top-0 z-30 flex-wrap -mx-7 -mt-7 mb-2 bg-white/90 px-7 py-5 backdrop-blur-md border-b border-slate-100" ref={headerRef}>
+        <div className="min-w-0">
           <h1 className="page-title">服务</h1>
-          <p className="page-subtitle">本地 RAG 知识库 · Wiki 知识图谱 · MCP · 软件对接 · Prompt 模板 · 支持 AI Agent 对接</p>
+          <p className="page-subtitle">本地 RAG 知识库 · Wiki 知识图谱 · Software · MCP · Prompt 模板 · 支持 AI Agent 对接</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
           {serviceTabs.map(({ key, label, icon: Icon }) => (
-            <button
-              key={key}
-              onClick={() => setServiceTab(key)}
-              className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition-all ${
-                serviceTab === key
-                  ? "border border-blue-100 bg-white text-slate-900 shadow-[0_8px_18px_rgba(15,23,42,0.05)]"
-                  : "text-slate-500 hover:bg-white/70 hover:text-slate-900"
-              }`}
-            >
-              <Icon size={16} />
-              {label}
-            </button>
+            <Fragment key={key}>
+              <button
+                onClick={() => setServiceTab(key)}
+                title={key === "software" ? "测试功能 · 开发迭代中" : undefined}
+                className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl px-3 py-2 text-sm font-medium transition-all ${
+                  serviceTab === key
+                    ? "border border-blue-100 bg-white text-slate-900 shadow-[0_8px_18px_rgba(15,23,42,0.05)]"
+                    : "text-slate-500 hover:bg-white/70 hover:text-slate-900"
+                }`}
+              >
+                <Icon size={16} />
+                {label}
+                {key === "software" && (
+                  <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-amber-600">
+                    Beta
+                  </span>
+                )}
+              </button>
+              {/* Software 属测试功能：分割线与其后「对外能力」类入口（MCP / Skills / Prompt 模板）分组 */}
+              {key === "software" && <div aria-hidden className="mx-1 h-6 w-px shrink-0 bg-slate-300" />}
+            </Fragment>
           ))}
         </div>
       </div>
