@@ -65,6 +65,8 @@ function App() {
             <Route path="/services/wiki" element={<KnowledgeBasePage />} />
             <Route path="/services/skills" element={<KnowledgeBasePage />} />
             <Route path="/services/prompts" element={<KnowledgeBasePage />} />
+            <Route path="/services/software" element={<KnowledgeBasePage />} />
+            <Route path="/software" element={<Navigate to="/services/software" replace />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
           </Suspense>

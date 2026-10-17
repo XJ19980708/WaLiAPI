@@ -799,3 +799,81 @@ export interface PromptTemplate {
   active: boolean;
   created_at: string;
 }
+
+// ── 软件对接（Software）───────────────────────────────────────────────────────
+// 连接器实例：一个本地软件/通用方案 + 用户配置，经 MCP 暴露为 software__ 工具
+
+export interface SoftwareInstance {
+  id: number;
+  connector_id: string;
+  name: string;
+  config: Record<string, unknown>;
+  /** 1 = 已在 /mcp 暴露工具 */
+  mcp_enabled: number;
+  /** auto / confirm_high_risk / confirm_all */
+  approval_mode: string;
+  /** 1 = 实例启用 */
+  enabled: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateSoftwareInstanceInput {
+  connector_id: string;
+  name: string;
+  config: Record<string, unknown>;
+  mcp_enabled: boolean;
+  approval_mode: string;
+}
+
+export interface UpdateSoftwareInstanceInput {
+  id: number;
+  name?: string;
+  config?: Record<string, unknown>;
+  mcp_enabled?: boolean;
+  approval_mode?: string;
+}
+
+export interface SoftwareConnectorInfo {
+  id: string;
+  label: string;
+  description: string;
+  platforms: string;
+  sample_config: Record<string, unknown>;
+}
+
+export interface SoftwareToolPreview {
+  name: string;
+  mcp_name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+  risk: string;
+  risk_label: string;
+}
+
+export interface SoftwareToolLog {
+  id: number;
+  tool: string;
+  risk: string;
+  args_summary: string;
+  status: string;
+  error: string;
+  duration_ms: number;
+  created_at: string;
+}
+
+/** 内置接入预设（扫描命中的建议方案） */
+export interface ConnectorSuggestion {
+  connector_id: string;
+  connector_label: string;
+  hint: string;
+  config: Record<string, unknown>;
+}
+
+/** 扫描到的本机软件 */
+export interface ScannedApp {
+  name: string;
+  path: string;
+  source: string;
+  suggestion: ConnectorSuggestion | null;
+}

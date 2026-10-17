@@ -35,7 +35,10 @@ pub async fn get_grants(pool: &sqlx::SqlitePool, id: &str) -> Result<Vec<String>
 }
 
 /// Wiki 项目的查询授权（与 RAG 平行的独立维度）。
-pub async fn get_wiki_grants(pool: &sqlx::SqlitePool, id: &str) -> Result<Vec<String>, sqlx::Error> {
+pub async fn get_wiki_grants(
+    pool: &sqlx::SqlitePool,
+    id: &str,
+) -> Result<Vec<String>, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT project_id FROM api_key_wiki_access WHERE api_key_id = ? ORDER BY project_id",
     )
@@ -59,7 +62,10 @@ pub async fn set_wiki_grants(
         .bind(id)
         .execute(&mut *tx)
         .await?;
-    for project_id in project_ids.iter().collect::<std::collections::BTreeSet<_>>() {
+    for project_id in project_ids
+        .iter()
+        .collect::<std::collections::BTreeSet<_>>()
+    {
         sqlx::query("INSERT INTO api_key_wiki_access (api_key_id, project_id) VALUES (?, ?)")
             .bind(id)
             .bind(project_id)

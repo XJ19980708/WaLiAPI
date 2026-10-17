@@ -26,7 +26,7 @@ const navItems = [
   { to: "/usage", icon: BookOpen, label: "使用", subLabel: "API、Codex ... 配置" },
   { to: "/channels", icon: Radio, label: "渠道" },
   { to: "/api-keys", icon: Key, label: "密钥" },
-  { to: "/services", icon: Database, label: "服务", subLabel: "RAG、Wiki、Prompt ..." },
+  { to: "/services", icon: Database, label: "服务", subLabel: "RAG、Wiki、软件 ..." },
   { to: "/logs", icon: ScrollText, label: "日志" },
   { to: "/settings", icon: Settings, label: "设置" },
 ];

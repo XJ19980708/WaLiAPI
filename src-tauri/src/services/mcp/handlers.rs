@@ -838,7 +838,9 @@ async fn scoped_wiki_tool_call(
         return Ok(serde_json::json!(list));
     }
     let project_id = args["project_id"].as_str().unwrap_or("");
-    access.require_wiki_project(shared, project_id, true).await?;
+    access
+        .require_wiki_project(shared, project_id, true)
+        .await?;
     handle_tool_call(shared, name, args, host)
         .await
         .map_err(|e| QueryError::new(StatusCode::BAD_REQUEST, e))
@@ -880,8 +882,13 @@ async fn dispatch_jsonrpc_async(
                     }
                 }
             }
+            // 软件对接：动态追加启用中的软件实例工具（software__ 命名空间）
+            tools.extend(
+                crate::services::software::mcp_bridge::list_enabled_tools(&shared.state.db.pool)
+                    .await,
+            );
             McpResponse::success(req.id.clone(), serde_json::json!({ "tools": tools }))
-        },
+        }
         "tools/call" => {
             let tool_name = req
                 .params
@@ -1078,6 +1085,13 @@ async fn handle_tool_call(
     host: Option<&str>,
 ) -> Result<serde_json::Value, String> {
     let pool = &shared.state.db.pool;
+
+    // 软件对接工具（software__ 命名空间）→ software 能力域分发。
+    // 仅 MCP token 全量模式可达：scoped 白名单不含 software__ 前缀，天然隔离。
+    if tool_name.starts_with("software__") {
+        return crate::services::software::mcp_bridge::call_tool(&shared.state, tool_name, args)
+            .await;
+    }
 
     match tool_name {
         "search_knowledge_base" => {
@@ -2217,7 +2231,8 @@ async fn handle_tool_call(
             let top_k = args.get("top_k").and_then(|t| t.as_u64()).unwrap_or(5) as usize;
             let model = args.get("model").and_then(|m| m.as_str());
 
-            let result = wiki_handlers::ask_inner(shared, project_id, question, top_k, model, host).await;
+            let result =
+                wiki_handlers::ask_inner(shared, project_id, question, top_k, model, host).await;
 
             match result {
                 Ok(json) => Ok(serde_json::json!({

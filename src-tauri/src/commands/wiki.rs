@@ -234,9 +234,10 @@ pub async fn add_wiki_source(
     let pool = state.db.pool.clone();
     let repo = crate::services::wiki::repository::WikiRepository::new(pool);
 
-    let content_bytes = input.content.as_deref().map(|c| {
-        crate::services::wiki::project::resolve_source_content(&input.filename, c)
-    });
+    let content_bytes = input
+        .content
+        .as_deref()
+        .map(|c| crate::services::wiki::project::resolve_source_content(&input.filename, c));
 
     let content_hash = content_bytes.as_ref().map(|b| {
         let mut hasher = Sha256::new();
@@ -246,12 +247,8 @@ pub async fn add_wiki_source(
     let file_size = content_bytes.as_ref().map(|b| b.len() as i64).unwrap_or(0);
 
     if let Some(ref content) = content_bytes {
-        crate::services::wiki::project::write_source_file(
-            &project_id,
-            &input.filename,
-            content,
-        )
-        .await?;
+        crate::services::wiki::project::write_source_file(&project_id, &input.filename, content)
+            .await?;
     }
 
     repo.add_source(&project_id, &input, content_hash.as_deref(), file_size)
@@ -274,11 +271,7 @@ pub async fn add_wiki_source_from_path(
         .and_then(|n| n.to_str())
         .ok_or_else(|| "无效的文件路径".to_string())?
         .to_string();
-    let ext = filename
-        .rsplit('.')
-        .next()
-        .unwrap_or("txt")
-        .to_lowercase();
+    let ext = filename.rsplit('.').next().unwrap_or("txt").to_lowercase();
 
     let bytes = tokio::fs::read(&path)
         .await
@@ -399,9 +392,7 @@ pub async fn ingest_wiki_source(
             let repo = crate::services::wiki::repository::WikiRepository::new(pool_clone);
             if cancelled {
                 // 用户主动停止：来源落 cancelled（而非 failed），便于区分
-                let _ = repo
-                    .update_source_status(&sid, "cancelled", 0, None)
-                    .await;
+                let _ = repo.update_source_status(&sid, "cancelled", 0, None).await;
             } else {
                 let _ = repo
                     .update_source_status(&sid, "failed", 0, Some(&err))

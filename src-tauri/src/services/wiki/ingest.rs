@@ -434,7 +434,12 @@ async fn extract_pdf_for_wiki(
                     jpeg,
                 )
                 .await?;
-                out.push_str(&format!("![page {0} screenshot {1}]({2})\n\n", page_no, idx + 1, url));
+                out.push_str(&format!(
+                    "![page {0} screenshot {1}]({2})\n\n",
+                    page_no,
+                    idx + 1,
+                    url
+                ));
             }
         }
         return Ok(out.trim_end().to_string());
@@ -579,7 +584,11 @@ async fn extract_pdf_for_wiki(
         if let Some(page_md) = recognized.get(&p) {
             out.push_str(page_md);
         } else {
-            out.push_str(&format!("<!-- pdf page: {} -->\n\n{}\n\n", p, mark_step_headings(t)));
+            out.push_str(&format!(
+                "<!-- pdf page: {} -->\n\n{}\n\n",
+                p,
+                mark_step_headings(t)
+            ));
             let images = all_images.get(i).cloned().unwrap_or_default();
             for (idx, jpeg) in images.iter().enumerate() {
                 let token = uuid::Uuid::new_v4().simple().to_string();
@@ -590,7 +599,12 @@ async fn extract_pdf_for_wiki(
                     jpeg,
                 )
                 .await?;
-                out.push_str(&format!("![page {0} screenshot {1}]({2})\n\n", p, idx + 1, url));
+                out.push_str(&format!(
+                    "![page {0} screenshot {1}]({2})\n\n",
+                    p,
+                    idx + 1,
+                    url
+                ));
             }
         }
     }
@@ -867,7 +881,11 @@ async fn generate_wiki_pages(
             source_filename,
             "generating",
             16 + (i as f64 / total.max(1) as f64 * 14.0) as u8,
-            &format!("LLM 生成页面{}{}", if total > 1 { "（分批）" } else { "" }, label),
+            &format!(
+                "LLM 生成页面{}{}",
+                if total > 1 { "（分批）" } else { "" },
+                label
+            ),
         );
         match generate_batch(
             events,
@@ -1665,9 +1683,14 @@ mod tests {
         // 步骤正文（冒号后）与标题分开
         assert!(out.contains("打开网站 http://x 登录管理员"));
         // 单行"第一步：xx"应被拆分，不再以整行出现
-        assert!(!out.lines().any(|l| l == "第一步：打开网站 http://x 登录管理员"));
+        assert!(!out
+            .lines()
+            .any(|l| l == "第一步：打开网站 http://x 登录管理员"));
         // 无步骤的普通文本原样返回
-        assert_eq!(mark_step_headings("普通文本，无步骤。"), "普通文本，无步骤。");
+        assert_eq!(
+            mark_step_headings("普通文本，无步骤。"),
+            "普通文本，无步骤。"
+        );
     }
 
     /// FIX-LATEST：用户自定义 schema 用 `### FILE: path.md` 头输出多页。
@@ -1730,9 +1753,15 @@ type: entity
         assert_eq!(pages.len(), 2, "---PAGE--- 格式应拆两页");
 
         // 正文中的 .md 引用行不误拆（纯路径行仅在未进入内容时识别）
-        let single = "entities/a.md\n---\ntitle: A\n---\n# A\n参考 [[b]]，详细见 entities/b.md 的说明\n结尾";
+        let single =
+            "entities/a.md\n---\ntitle: A\n---\n# A\n参考 [[b]]，详细见 entities/b.md 的说明\n结尾";
         let pages = parse_generated_pages(single, "s.pdf");
-        assert_eq!(pages.len(), 1, "正文引用 .md 不得拆分页面: {:?}", pages.iter().map(|p| p.path.as_str()).collect::<Vec<_>>());
+        assert_eq!(
+            pages.len(),
+            1,
+            "正文引用 .md 不得拆分页面: {:?}",
+            pages.iter().map(|p| p.path.as_str()).collect::<Vec<_>>()
+        );
     }
 
     /// FIX-22：摄入失败时任务与来源状态收敛为 failed，不再永久 running。

@@ -352,7 +352,11 @@ impl WikiRepository {
                 }
             }
             // 命中越多越靠前
-            results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+            results.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
             results.truncate(top_k);
         } else {
             // Add snippets for LIKE matches too
@@ -479,7 +483,7 @@ impl WikiRepository {
     pub async fn cancel_source_ingest(&self, source_id: &str) -> Result<(), String> {
         sqlx::query(
             "UPDATE wiki_ingest_queue SET status='cancelled', completed_at=? \
-             WHERE source_id=? AND status IN ('running','pending')"
+             WHERE source_id=? AND status IN ('running','pending')",
         )
         .bind(Self::now())
         .bind(source_id)
@@ -817,10 +821,7 @@ mod tests {
     fn query_terms_splits_cjk_long_question_into_bigrams() {
         let terms = query_terms("首次申请审核需要哪些截图");
         for want in ["首次", "申请", "审核", "需要", "截图"] {
-            assert!(
-                terms.iter().any(|t| t == want),
-                "缺少词 {want}: {terms:?}"
-            );
+            assert!(terms.iter().any(|t| t == want), "缺少词 {want}: {terms:?}");
         }
         assert!(terms.len() <= 24);
         // 无分隔符的 ASCII 词整段成词并小写

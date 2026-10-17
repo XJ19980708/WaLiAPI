@@ -129,9 +129,10 @@ pub async fn add_source(
 ) -> Response {
     let repo = WikiRepository::new(shared.state.db.pool.clone());
 
-    let content_bytes = input.content.as_deref().map(|c| {
-        crate::services::wiki::project::resolve_source_content(&input.filename, c)
-    });
+    let content_bytes = input
+        .content
+        .as_deref()
+        .map(|c| crate::services::wiki::project::resolve_source_content(&input.filename, c));
 
     let content_hash = content_bytes.as_ref().map(|b| {
         let mut hasher = Sha256::new();
@@ -416,7 +417,16 @@ pub async fn ask(
         .and_then(|v| v.to_str().ok())
         .map(|h| format!("http://{h}"));
 
-    match ask_inner(&shared, &id, &input.question, top_k, model, base_url.as_deref()).await {
+    match ask_inner(
+        &shared,
+        &id,
+        &input.question,
+        top_k,
+        model,
+        base_url.as_deref(),
+    )
+    .await
+    {
         Ok(json) => Json(json).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     }
@@ -465,11 +475,7 @@ fn collect_asset_map(text: &str, project_id: &str, out: &mut Vec<(String, String
 ///   - `.../<file>`、裸 `<file>`
 /// 已在回答里出现的完整相对/绝对地址先被保护，替换完成后统一交给
 /// `absolutize_asset_urls` 补 `http://host:port`。
-fn expand_image_refs(
-    text: &str,
-    assets: &[(String, String)],
-    base_url: Option<&str>,
-) -> String {
+fn expand_image_refs(text: &str, assets: &[(String, String)], base_url: Option<&str>) -> String {
     let base = base_url.filter(|b| !b.is_empty()).unwrap_or("");
     let mut out = text.to_string();
     // 1) 保护已含完整地址的引用（避免二次改写为嵌套结构）
@@ -562,7 +568,21 @@ fn url_prefix_segment_start(before: &str) -> Option<usize> {
             c.is_whitespace()
                 || matches!(
                     c,
-                    '"' | '\'' | '(' | ')' | '[' | ']' | '|' | ',' | ';' | '、' | '，' | '：' | '。' | '；' | '（' | '）'
+                    '"' | '\''
+                        | '('
+                        | ')'
+                        | '['
+                        | ']'
+                        | '|'
+                        | ','
+                        | ';'
+                        | '、'
+                        | '，'
+                        | '：'
+                        | '。'
+                        | '；'
+                        | '（'
+                        | '）'
                 )
         })
         .map(|p| p + 1)
@@ -612,9 +632,8 @@ pub fn complete_asset_urls(text: &str, project_id: &str) -> String {
                     out.push_str(marker);
                 } else {
                     // 省略了前缀（含 "..." / "/" 残片）：裁掉省略号后补完整相对路径
-                    let trimmed = before.trim_end_matches(|c: char| {
-                        c == '.' || c == '…' || c == '/' || c == ' '
-                    });
+                    let trimmed = before
+                        .trim_end_matches(|c: char| c == '.' || c == '…' || c == '/' || c == ' ');
                     out.push_str(trimmed);
                     out.push_str(&full_prefix);
                 }
@@ -804,10 +823,10 @@ pub async fn ask_inner(
         .collect();
 
     // 最后一道保险：LLM 可能把图片写成裸文件名（`page-1-1.jpg`）、省略前缀的相对路径、
-// 或完整 URL。三步依次处理，保证客户端拿到的一定是完整可渲染的 markdown 图片：
-//   ① 补全被省略的 `assets/<hash>/<file>` 片段
-//   ② 把裸文件名还原成 `![file](完整URL)`（映射来自检索页面）
-//   ③ 统一补上 http://host:port
+    // 或完整 URL。三步依次处理，保证客户端拿到的一定是完整可渲染的 markdown 图片：
+    //   ① 补全被省略的 `assets/<hash>/<file>` 片段
+    //   ② 把裸文件名还原成 `![file](完整URL)`（映射来自检索页面）
+    //   ③ 统一补上 http://host:port
     let answer = complete_asset_urls(&answer, id);
     let answer = expand_image_refs(&answer, &asset_map, base_url.as_deref());
     let answer = absolutize_asset_urls(&answer, base_url.as_deref());
@@ -910,7 +929,8 @@ pub async fn get_asset(
         !s.is_empty()
             && s != "."
             && s != ".."
-            && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
     }
     if !safe_segment(&project_id) || !safe_segment(&token) || !safe_segment(&file) {
         return StatusCode::NOT_FOUND.into_response();
@@ -934,9 +954,7 @@ pub async fn get_asset(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        absolutize_asset_urls, collect_asset_map, complete_asset_urls, expand_image_refs,
-    };
+    use super::{absolutize_asset_urls, collect_asset_map, complete_asset_urls, expand_image_refs};
 
     /// 用户实测场景（截图证据）：LLM 在表格里写 `<hash>/page-1-1.jpg`（省略 `/api/wiki/projects/<pid>/assets/`），
     /// 服务端必须据检索页面还原成完整可渲染的 markdown 图片。
@@ -944,18 +962,16 @@ mod tests {
     fn hash_prefixed_and_bare_filenames_become_full_markdown_images() {
         let pid = "f821cc2e-daf1-4994-827c-51b93bd29bc7";
         let hash = "cc6f0b49c762489c812795f36dab5f9f";
-        let page = format!(
-            "![page 1 screenshot 1](/api/wiki/projects/{pid}/assets/{hash}/page-1-1.jpg)"
-        );
+        let page =
+            format!("![page 1 screenshot 1](/api/wiki/projects/{pid}/assets/{hash}/page-1-1.jpg)");
         let mut map = Vec::new();
         collect_asset_map(&page, pid, &mut map);
         assert_eq!(map.len(), 1);
         assert_eq!(map[0].0, "page-1-1.jpg");
 
         let base = "http://127.0.0.1:1133";
-        let expected = format!(
-            "![page-1-1.jpg]({base}/api/wiki/projects/{pid}/assets/{hash}/page-1-1.jpg)"
-        );
+        let expected =
+            format!("![page-1-1.jpg]({base}/api/wiki/projects/{pid}/assets/{hash}/page-1-1.jpg)");
 
         // ① 用户截图形态：<hash>/<file>
         let answer = format!("| 第1页 | {hash}/page-1-1.jpg |");
@@ -1020,11 +1036,15 @@ mod tests {
         let text = "步骤1：.../assets/60053bcba08e425d90344c8a83bc565a/page-1-1.jpg、/assets/736a68b4b3e140fb86737921dd324aa4/page-1-2.jpg";
         let filled = complete_asset_urls(text, pid);
         assert!(
-            filled.contains("/api/wiki/projects/p/assets/60053bcba08e425d90344c8a83bc565a/page-1-1.jpg"),
+            filled.contains(
+                "/api/wiki/projects/p/assets/60053bcba08e425d90344c8a83bc565a/page-1-1.jpg"
+            ),
             "{filled}"
         );
         assert!(
-            filled.contains("/api/wiki/projects/p/assets/736a68b4b3e140fb86737921dd324aa4/page-1-2.jpg"),
+            filled.contains(
+                "/api/wiki/projects/p/assets/736a68b4b3e140fb86737921dd324aa4/page-1-2.jpg"
+            ),
             "{filled}"
         );
         assert!(!filled.contains("..."), "省略号应被清除: {filled}");
@@ -1036,7 +1056,10 @@ mod tests {
         );
         // 已带完整前缀的不重复补全
         let once = complete_asset_urls(&full, pid);
-        assert_eq!(once.matches("assets/").count(), full.matches("assets/").count());
+        assert_eq!(
+            once.matches("assets/").count(),
+            full.matches("assets/").count()
+        );
         assert!(!once.contains("projects/p/assets/projects/"));
     }
 
@@ -1053,7 +1076,8 @@ mod tests {
             "![第 2 页原稿](http://10.55.1.101:8777/api/wiki/projects/p1/assets/abc123/page-2.jpg)"
         );
         // 多个引用按同一 host 补全
-        let multi = "![](/api/wiki/projects/p1/assets/a/1.jpg) x ![](/api/wiki/projects/p1/assets/b/2.jpg)";
+        let multi =
+            "![](/api/wiki/projects/p1/assets/a/1.jpg) x ![](/api/wiki/projects/p1/assets/b/2.jpg)";
         let out = absolutize_asset_urls(multi, Some("http://127.0.0.1:8777"));
         assert_eq!(
             out,

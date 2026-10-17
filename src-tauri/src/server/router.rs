@@ -205,6 +205,7 @@ mod tests {
             events: crate::server::event_bridge::EventSink::headless(event_tx),
             settings: crate::settings_store::SettingsStore::file(data_dir.join("settings.json")),
             data_dir,
+            app_handle: Arc::new(tokio::sync::RwLock::new(None)),
         })
     }
 

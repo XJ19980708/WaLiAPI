@@ -386,7 +386,7 @@ async fn create_new_anthropic_dual_writes_type_and_compat_base() {
     assert_eq!(row.provider.as_deref(), Some("zhipu"));
     assert_eq!(
         row.native_base_url.as_deref(),
-        Some("https://open.bigmodel.cn/api/anthropic")
+        Some("https://open.bigmodel.cn/api/anthropic/v1")
     );
     assert_eq!(row.native_endpoints.as_deref(), Some("[\"messages\"]"));
     // Business fields preserved.
@@ -612,7 +612,7 @@ async fn update_two_step_writes_full_identity_and_revision() {
     assert_eq!(row.provider.as_deref(), Some("zhipu"));
     assert_eq!(
         row.native_base_url.as_deref(),
-        Some("https://open.bigmodel.cn/api/anthropic")
+        Some("https://open.bigmodel.cn/api/anthropic/v1")
     );
     assert_eq!(row.native_endpoints.as_deref(), Some("[\"messages\"]"));
     // api_key untouched (None = keep).
@@ -839,7 +839,8 @@ async fn two_step_update_commits_both_legacy_and_identity() {
     assert_eq!(row.provider.as_deref(), Some("ollama"));
     assert_eq!(
         row.native_base_url.as_deref(),
-        Some("http://localhost:11434")
+        // anthropic 协议存储时统一补 /v1（与 normalize_native_base_url 契约一致）
+        Some("http://localhost:11434/v1")
     );
     // Legacy claude adaptor final URL.
     assert_eq!(
@@ -921,7 +922,7 @@ async fn preset_url_fixtures_new_and_legacy() {
         .await
         .expect("create anthropic");
     assert_eq!(
-        join(row.native_base_url.as_deref().unwrap(), "v1/messages"),
+        join(row.native_base_url.as_deref().unwrap(), "messages"),
         "https://api.anthropic.com/v1/messages"
     );
     assert_eq!(row.channel_type, "claude");
@@ -947,7 +948,7 @@ async fn preset_url_fixtures_new_and_legacy() {
         .await
         .expect("create deepseek");
     assert_eq!(
-        join(row.native_base_url.as_deref().unwrap(), "v1/messages"),
+        join(row.native_base_url.as_deref().unwrap(), "messages"),
         "https://api.deepseek.com/anthropic/v1/messages"
     );
     assert_eq!(row.channel_type, "claude");
@@ -973,7 +974,7 @@ async fn preset_url_fixtures_new_and_legacy() {
         .await
         .expect("create zhipu");
     assert_eq!(
-        join(row.native_base_url.as_deref().unwrap(), "v1/messages"),
+        join(row.native_base_url.as_deref().unwrap(), "messages"),
         "https://open.bigmodel.cn/api/anthropic/v1/messages"
     );
     assert_eq!(
@@ -998,7 +999,7 @@ async fn preset_url_fixtures_new_and_legacy() {
         .await
         .expect("create doubao");
     assert_eq!(
-        join(row.native_base_url.as_deref().unwrap(), "v1/messages"),
+        join(row.native_base_url.as_deref().unwrap(), "messages"),
         "https://ark.cn-beijing.volces.com/api/coding/v1/messages"
     );
     assert_eq!(
@@ -1023,7 +1024,7 @@ async fn preset_url_fixtures_new_and_legacy() {
         .await
         .expect("create anthropic/ollama");
     assert_eq!(
-        join(row.native_base_url.as_deref().unwrap(), "v1/messages"),
+        join(row.native_base_url.as_deref().unwrap(), "messages"),
         "http://localhost:11434/v1/messages"
     );
     assert_eq!(row.base_url, "http://localhost:11434/v1");

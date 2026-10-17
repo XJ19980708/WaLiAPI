@@ -274,7 +274,9 @@ pub fn resolve_source_content(filename: &str, content: &str) -> Vec<u8> {
         .map(|ext| ext.eq_ignore_ascii_case("pdf"))
         .unwrap_or(false);
     if is_pdf {
-        if let Ok(bytes) = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, content) {
+        if let Ok(bytes) =
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, content)
+        {
             return bytes;
         }
     }

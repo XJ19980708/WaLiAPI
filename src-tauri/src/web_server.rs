@@ -112,6 +112,7 @@ pub async fn run(cfg: WebServerConfig) -> Result<(), String> {
             &data_dir,
         )),
         data_dir,
+        app_handle: Arc::new(RwLock::new(None)),
     });
 
     // 注册全局网关事件出口（路由总览页的粒子动画数据源）。

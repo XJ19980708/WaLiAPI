@@ -28,7 +28,7 @@ impl Service for McpService {
                 .fetch_one(pool)
                 .await
                 .unwrap_or(0);
-        let tools = handlers::get_tools()
+        let mut tools = handlers::get_tools()
             .into_iter()
             .map(|tool| {
                 let name = tool
@@ -46,6 +46,27 @@ impl Service for McpService {
                 })
             })
             .collect::<Vec<_>>();
+        // 软件对接：动态工具（software__ 命名空间）
+        tools.extend(
+            crate::services::software::mcp_bridge::list_enabled_tools(pool)
+                .await
+                .into_iter()
+                .map(|tool| {
+                    let name = tool
+                        .get("name")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("unknown");
+                    let description = tool
+                        .get("description")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("");
+                    serde_json::json!({
+                        "name": name,
+                        "label": name,
+                        "desc": description,
+                    })
+                }),
+        );
 
         ServiceStatus {
             id: self.id().to_string(),

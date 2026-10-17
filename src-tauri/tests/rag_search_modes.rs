@@ -53,6 +53,8 @@ async fn fixture() -> (SharedState, String) {
         events: EventSink::headless(tx),
         settings,
         data_dir,
+        // headless 测试环境无桌面 AppHandle，弹窗审批不可用
+        app_handle: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
     });
     let mock = Box::leak(Box::new(tauri::test::mock_app()));
     mock.manage(state.clone());

@@ -198,9 +198,9 @@ impl PdfRenderer {
         let count = pages.len();
         let mut all: Vec<Vec<Vec<u8>>> = Vec::with_capacity(count as usize);
         for idx in 0..count {
-            let page = pages.get(idx).map_err(|e| {
-                OcrError::RenderFailed(format!("读取第 {} 页失败: {}", idx + 1, e))
-            })?;
+            let page = pages
+                .get(idx)
+                .map_err(|e| OcrError::RenderFailed(format!("读取第 {} 页失败: {}", idx + 1, e)))?;
             let mut imgs: Vec<Vec<u8>> = Vec::new();
             for obj in page.objects().iter() {
                 if let PdfPageObject::Image(image) = &obj {

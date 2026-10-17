@@ -18,6 +18,9 @@ import type {
   AuthQuotaStatus, AuthUpdateInput, AuthResetCreditsSnapshot, AuthResetOperationResult,
   AuthProviderInfo, AuthLoginMethod,
   PromptTemplate,
+  SoftwareInstance, CreateSoftwareInstanceInput, UpdateSoftwareInstanceInput,
+  SoftwareConnectorInfo, SoftwareToolPreview, SoftwareToolLog,
+  ScannedApp,
 } from "../types";
 
 /**
@@ -743,4 +746,21 @@ export const promptTemplateApi = {
 // 语义缓存管理命令（C-02）
 export const semanticCacheApi = {
   clear: (model?: string) => invoke<number>("clear_semantic_cache", { model: model ?? null }),
+};
+
+// ── 软件对接（Software）───────────────────────────────────────────────────────
+export const softwareApi = {
+  getInstances: () => invoke<SoftwareInstance[]>("get_software_instances"),
+  getCatalog: () => invoke<SoftwareConnectorInfo[]>("get_software_connector_catalog"),
+  create: (input: CreateSoftwareInstanceInput) =>
+    invoke<SoftwareInstance>("create_software_instance", { input }),
+  update: (input: UpdateSoftwareInstanceInput) =>
+    invoke<SoftwareInstance>("update_software_instance", { input }),
+  toggle: (id: number, enabled: boolean) =>
+    invoke<SoftwareInstance>("toggle_software_instance", { id, enabled }),
+  delete: (id: number) => invoke<void>("delete_software_instance", { id }),
+  getTools: (id: number) => invoke<SoftwareToolPreview[]>("get_software_instance_tools", { id }),
+  getLogs: (instanceId?: number, limit?: number) =>
+    invoke<SoftwareToolLog[]>("get_software_tool_logs", { instanceId, limit }),
+  scan: () => invoke<ScannedApp[]>("scan_installed_software"),
 };

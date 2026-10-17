@@ -73,6 +73,8 @@ pub struct AppState {
     pub settings: settings_store::SettingsStore,
     /// 应用数据目录（KB 文件等落盘位置）。
     pub data_dir: std::path::PathBuf,
+    /// 软件对接：桌面 AppHandle（headless 为 None），用于高危操作弹窗确认。
+    pub app_handle: crate::services::software::approval::SharedAppHandle,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -237,6 +239,7 @@ pub fn run() {
                         app_handle.clone(),
                     ))),
                     data_dir,
+                    app_handle: Arc::new(RwLock::new(Some(app_handle.clone()))),
                 });
                 app_handle.manage(state.clone());
 
@@ -452,6 +455,16 @@ pub fn run() {
             commands::app_config::reset_codex_auth,
             commands::app_config::get_app_config_content,
             commands::app_config::open_config_folder,
+            // Software（软件对接）
+            commands::software::get_software_instances,
+            commands::software::get_software_connector_catalog,
+            commands::software::create_software_instance,
+            commands::software::update_software_instance,
+            commands::software::toggle_software_instance,
+            commands::software::delete_software_instance,
+            commands::software::get_software_instance_tools,
+            commands::software::get_software_tool_logs,
+            commands::software::scan_installed_software,
         ])
         .build(tauri::generate_context!())
         .expect("error while building WaLiAPI")

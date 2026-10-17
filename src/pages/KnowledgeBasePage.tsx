@@ -77,11 +77,13 @@ import {
   AlertTriangle,
   Save,
   Inbox,
+  AppWindow,
 } from "lucide-react";
 
 import { PromptTemplatesSection } from "../components/PromptTemplatesSection";
+import { SoftwareSection } from "./SoftwarePage";
 
-type ServiceTab = "knowledge" | "wiki" | "mcp" | "skills" | "prompts";
+type ServiceTab = "knowledge" | "wiki" | "mcp" | "software" | "skills" | "prompts";
 type KbTab = "documents" | "sources" | "search" | "ask" | "settings" | "index" | "mcp";
 
 // ── Wiki 摄入进度（模块级内存状态）────────────────────────────────
@@ -132,7 +134,7 @@ function ConfirmDialog({ message, confirmLabel = "删除", onCancel, onConfirm }
 
 export function KnowledgeBasePage() {
   const location = useLocation();
-  const initialTab: ServiceTab = location.pathname.includes("/mcp") ? "mcp" : location.pathname.includes("/skills") ? "skills" : location.pathname.includes("/prompts") ? "prompts" : location.pathname.includes("/wiki") ? "wiki" : "knowledge";
+  const initialTab: ServiceTab = location.pathname.includes("/mcp") ? "mcp" : location.pathname.includes("/software") ? "software" : location.pathname.includes("/skills") ? "skills" : location.pathname.includes("/prompts") ? "prompts" : location.pathname.includes("/wiki") ? "wiki" : "knowledge";
   const [serviceTab, setServiceTab] = useState<ServiceTab>(initialTab);
 
   // 实时测量 page-header 高度 → CSS 变量 --wali-page-header-h。
@@ -155,6 +157,7 @@ export function KnowledgeBasePage() {
     { key: "knowledge", label: "RAG", icon: BookOpen },
     { key: "wiki", label: "Wiki", icon: Network },
     { key: "mcp", label: "MCP", icon: Terminal },
+    { key: "software", label: "软件", icon: AppWindow },
     { key: "skills", label: "Skills", icon: Puzzle },
     { key: "prompts", label: "Prompt 模板", icon: FileText },
   ];
@@ -165,7 +168,7 @@ export function KnowledgeBasePage() {
       <div className="page-header sticky top-0 z-30 -mx-7 -mt-7 mb-2 bg-white/90 px-7 py-5 backdrop-blur-md border-b border-slate-100" ref={headerRef}>
         <div>
           <h1 className="page-title">服务</h1>
-          <p className="page-subtitle">本地 RAG 知识库 · Wiki 知识图谱 · MCP · Prompt 模板 · 支持 AI Agent 对接</p>
+          <p className="page-subtitle">本地 RAG 知识库 · Wiki 知识图谱 · MCP · 软件对接 · Prompt 模板 · 支持 AI Agent 对接</p>
         </div>
         <div className="flex items-center gap-2">
           {serviceTabs.map(({ key, label, icon: Icon }) => (
@@ -186,7 +189,7 @@ export function KnowledgeBasePage() {
       </div>
 
       <div>
-        {serviceTab === "knowledge" ? <KnowledgeBaseSection /> : serviceTab === "wiki" ? <WikiSection /> : serviceTab === "mcp" ? <McpSection /> : serviceTab === "prompts" ? <PromptTemplatesSection /> : <SkillsSection />}
+        {serviceTab === "knowledge" ? <KnowledgeBaseSection /> : serviceTab === "wiki" ? <WikiSection /> : serviceTab === "mcp" ? <McpSection /> : serviceTab === "software" ? <SoftwareSection /> : serviceTab === "prompts" ? <PromptTemplatesSection /> : <SkillsSection />}
       </div>
     </div>
   );
