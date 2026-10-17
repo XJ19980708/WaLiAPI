@@ -101,6 +101,9 @@ tree-sitter-rust = "0.24"
 tree-sitter-go = "0.25"
 tree-sitter-java = "0.23"
 
+# Wiki 项目备份：导出/导入 zip 压缩包（含 raw/assets 图片 token 目录）
+zip = "2"
+
 # Web admin panel
 argon2 = "0.5"
 password-hash = { version = "0.5", features = ["rand_core"] }

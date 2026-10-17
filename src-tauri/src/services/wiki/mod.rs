@@ -1,3 +1,4 @@
+pub mod backup;
 pub mod handlers;
 pub mod ingest;
 pub mod models;

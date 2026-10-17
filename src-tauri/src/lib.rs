@@ -449,6 +449,11 @@ pub fn run() {
             commands::wiki::cancel_wiki_ingest,
             commands::wiki::rescan_wiki_sources,
             commands::wiki::get_wiki_tags,
+            commands::wiki::export_wiki_project,
+            commands::wiki::import_wiki_backup,
+            commands::wiki::import_wiki_backup_bytes,
+            commands::wiki::pick_wiki_export_dir,
+            commands::wiki::pick_wiki_import_file,
             // App Config (应用配置)
             commands::app_config::get_app_configs,
             commands::app_config::apply_app_config,

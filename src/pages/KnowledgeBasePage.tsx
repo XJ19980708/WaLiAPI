@@ -3,6 +3,7 @@ import { Select } from "../components/Select";
 import { Fragment, useEffect, useState, useCallback, useRef, useMemo, type ReactNode } from "react";
 import { Link as RouterLink, useLocation } from "react-router-dom";
 import { onFileDrop, isTauriRuntime } from "../lib/runtime";
+import { pickFileAsBase64 } from "../lib/web";
 import {
   KnowledgeBase,
   KbDocument,
@@ -27,6 +28,8 @@ import {
   type WikiSearchResult,
   type WikiGraphData,
   type WikiTag,
+  type WikiExportResult,
+  type WikiImportResult,
   type ServiceStatus,
 } from "../lib/api";
 import type { Channel, ApiKey } from "../types";
@@ -78,8 +81,11 @@ import {
   AlertTriangle,
   Save,
   Inbox,
-  Play,
+Play,
   KeyRound,
+  Download,
+  FileArchive,
+  FolderSearch,
 } from "lucide-react";
 
 import { PromptTemplatesSection } from "../components/PromptTemplatesSection";
@@ -3841,6 +3847,8 @@ function WikiSection() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
+  const [showExport, setShowExport] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [wikiDeleteTarget, setWikiDeleteTarget] = useState<{ message: string; run: () => void } | null>(null);
   const [wikiTab, setWikiTab] = useState<"overview" | "pages" | "sources" | "search" | "graph" | "settings">("overview");
@@ -3935,14 +3943,26 @@ function WikiSection() {
         <Network className="h-12 w-12 text-slate-300" />
         <p className="text-sm text-slate-500">还没有 Wiki 项目</p>
         <p className="text-xs text-slate-400">LLM 增量 RAG：摄入文档 → 生成结构化页面 → 知识图谱</p>
-        <button onClick={() => setShowCreate(true)} className="action-primary mt-3">
-          <Plus size={16} />
-          新建 Wiki 项目
-        </button>
+        <div className="mt-3 flex items-center gap-2">
+          <button onClick={() => setShowImport(true)} className="action-secondary">
+            <Download size={16} />
+            导入备份
+          </button>
+          <button onClick={() => setShowCreate(true)} className="action-primary">
+            <Plus size={16} />
+            新建 Wiki 项目
+          </button>
+        </div>
         {showCreate && (
           <CreateWikiProjectModal
             onClose={() => setShowCreate(false)}
             onCreated={async () => { setShowCreate(false); await fetchProjects(); }}
+          />
+        )}
+        {showImport && (
+          <WikiImportDialog
+            onClose={() => setShowImport(false)}
+            onImported={async () => { setShowImport(false); await fetchProjects(); }}
           />
         )}
       </div>
@@ -3951,7 +3971,23 @@ function WikiSection() {
 
   return (
     <>
-      <div className="flex justify-end mb-4">
+      <div className="flex justify-end gap-2 mb-4">
+        <button
+          onClick={() => setShowExport(true)}
+          className="action-secondary"
+          title="把项目导出为 zip 备份（含页面、源文件、图片与 token）"
+        >
+          <Upload size={16} />
+          导出
+        </button>
+        <button
+          onClick={() => setShowImport(true)}
+          className="action-secondary"
+          title="从 zip 备份导入并恢复项目"
+        >
+          <Download size={16} />
+          导入
+        </button>
         <button onClick={() => setShowCreate(true)} className="action-primary">
           <Plus size={16} />
           新建 Wiki 项目
@@ -4017,6 +4053,15 @@ function WikiSection() {
           onCreated={async () => { setShowCreate(false); await fetchProjects(); }}
         />
       )}
+      {showExport && (
+        <WikiExportDialog projects={projects} onClose={() => setShowExport(false)} />
+      )}
+      {showImport && (
+        <WikiImportDialog
+          onClose={() => setShowImport(false)}
+          onImported={async () => { setShowImport(false); await fetchProjects(); }}
+        />
+      )}
 
       {wikiDeleteTarget && (
         <ConfirmDialog
@@ -4026,6 +4071,249 @@ function WikiSection() {
         />
       )}
     </>
+  );
+}
+
+// ─── Wiki 项目备份：大小格式化 ─────────────────────────────────────
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(2)} MB`;
+}
+
+// ─── Wiki 导出弹窗：选项目 + 本地目录（可打开本地路径选择）→ 打 zip ──
+function WikiExportDialog({ projects, onClose }: { projects: WikiProject[]; onClose: () => void }) {
+  const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
+  const [targetDir, setTargetDir] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<WikiExportResult | null>(null);
+
+  // 弹窗期间锁定页面滚动（关闭时恢复）
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = ""; };
+  }, []);
+
+  const handlePickDir = async () => {
+    setError(null);
+    try {
+      const dir = await wikiApi.pickExportDir();
+      if (dir) setTargetDir(dir);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const handleExport = async () => {
+    if (!projectId) { setError("请选择要导出的 Wiki 项目"); return; }
+    const dir = targetDir.trim();
+    if (!dir) { setError("请输入或选择导出目录"); return; }
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const res = await wikiApi.exportProject(projectId, dir);
+      setDone(res);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="relative w-full max-w-lg rounded-3xl bg-white p-7 shadow-2xl max-h-[70vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <button onClick={onClose} className="absolute right-5 top-5 rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+          <XCircle className="h-5 w-5" />
+        </button>
+        <div className="flex items-center gap-2">
+          <div className="rounded-2xl border border-violet-100 bg-violet-50 p-2.5">
+            <Upload className="h-5 w-5 text-violet-600" />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">导出 Wiki 备份</h2>
+            <p className="text-xs text-slate-500">打包页面 MD、源文件、图片资产（含 token）与核心数据为 zip</p>
+          </div>
+        </div>
+        <div className="mt-5 space-y-4">
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-slate-700">选择项目 *</label>
+            <select
+              value={projectId}
+              onChange={e => { setProjectId(e.target.value); setDone(null); }}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm"
+            >
+              {projects.map(p => (
+                <option key={p.id} value={p.id}>{p.name}（{p.page_count} 页面 · {p.source_count} 源）</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-slate-700">导出目录 *</label>
+            <p className="mb-1.5 text-[11px] text-slate-400">
+              {isTauriRuntime() ? "备份以 wiki-backup-<项目名>-<时间戳>.zip 保存到该目录" : "填写服务端存放备份的目录路径"}
+            </p>
+            <div className="flex gap-2">
+              <input
+                value={targetDir}
+                onChange={e => setTargetDir(e.target.value)}
+                placeholder={isTauriRuntime() ? "例如 D:\\Backups\\wiki 或 /home/user/backups" : "例如 /data/waliapi/backups"}
+                className="min-w-0 flex-1 rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm"
+              />
+              {isTauriRuntime() && (
+                <button onClick={handlePickDir} className="action-secondary shrink-0" title="打开本地路径选择目录">
+                  <FolderSearch size={16} />
+                  打开本地路径
+                </button>
+              )}
+            </div>
+          </div>
+
+          {error && (
+            <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-xs text-red-600">
+              <XCircle size={14} className="mt-0.5 shrink-0" />
+              <span>导出失败：{error}</span>
+            </div>
+          )}
+          {done && (
+            <div className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-3 text-xs text-emerald-700">
+              <CheckCircle2 size={14} className="mt-0.5 shrink-0" />
+              <div className="min-w-0 space-y-0.5">
+                <p className="font-medium">导出成功</p>
+                <p className="break-all">{done.path}</p>
+                <p>{done.page_count} 页面 · {done.source_count} 源 · {done.file_count} 个文件 · {formatBytes(done.size_bytes)}</p>
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={onClose} className="action-secondary">关闭</button>
+          <button onClick={handleExport} disabled={busy || projects.length === 0} className="action-primary">
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+            {busy ? "导出中..." : "开始导出"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Wiki 导入弹窗：选 zip 备份 → 恢复为新项目（不覆盖现有数据） ────────
+function WikiImportDialog({ onClose, onImported }: { onClose: () => void; onImported: () => void }) {
+  const [picked, setPicked] = useState<{ label: string; path?: string; base64?: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<WikiImportResult | null>(null);
+
+  // 弹窗期间锁定页面滚动（关闭时恢复）
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = ""; };
+  }, []);
+
+  const handlePickFile = async () => {
+    setError(null);
+    try {
+      if (isTauriRuntime()) {
+        const path = await wikiApi.pickImportFile();
+        if (path) setPicked({ label: path.split(/[\\/]/).pop() || path, path });
+      } else {
+        const pickedFile = await pickFileAsBase64(".zip,application/zip");
+        if (pickedFile) setPicked({ label: pickedFile.name, base64: pickedFile.base64 });
+      }
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const handleImport = async () => {
+    if (!picked) { setError("请先选择要导入的 zip 备份文件"); return; }
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const res = picked.path
+        ? await wikiApi.importBackup(picked.path)
+        : await wikiApi.importBackupBytes(picked.base64 || "");
+      setDone(res);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="relative w-full max-w-lg rounded-3xl bg-white p-7 shadow-2xl max-h-[70vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <button onClick={onClose} className="absolute right-5 top-5 rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+          <XCircle className="h-5 w-5" />
+        </button>
+        <div className="flex items-center gap-2">
+          <div className="rounded-2xl border border-violet-100 bg-violet-50 p-2.5">
+            <FileArchive className="h-5 w-5 text-violet-600" />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">导入 Wiki 备份</h2>
+            <p className="text-xs text-slate-500">从导出 zip 恢复项目</p>
+          </div>
+        </div>
+        <div className="mt-5 space-y-4">
+          <div className="rounded-2xl border border-slate-100 px-4 py-3 text-[11px] text-slate-500 space-y-1">
+            <p>• 备份包含页面 MD、源文件、图片资产（token）与核心数据库记录，导入后可直接使用，无需重新摄入。</p>
+            <p>• 导入会创建为新项目（全新 ID），同名项目允许共存，不会覆盖任何现有数据。</p>
+            <p>• API Key 的 Wiki 查询授权不随备份恢复，导入后请在「密钥」页重新授权。</p>
+          </div>
+
+          <div className="flex gap-2">
+            <input
+              readOnly
+              value={picked?.label ?? ""}
+              placeholder={isTauriRuntime() ? "尚未选择备份文件" : "尚未选择备份文件（浏览器选择）"}
+              className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-600"
+            />
+            <button onClick={handlePickFile} disabled={busy} className="action-secondary shrink-0">
+              <FolderOpen size={16} />
+              选择文件
+            </button>
+          </div>
+
+          {error && (
+            <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-xs text-red-600">
+              <XCircle size={14} className="mt-0.5 shrink-0" />
+              <span>导入失败：{error}</span>
+            </div>
+          )}
+          {done && (
+            <div className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-3 text-xs text-emerald-700">
+              <CheckCircle2 size={14} className="mt-0.5 shrink-0" />
+              <div className="min-w-0 space-y-0.5">
+                <p className="font-medium">导入成功：已恢复为项目「{done.project_name}」</p>
+                <p>{done.page_count} 页面 · {done.source_count} 源 · {done.file_count} 个文件（含图片与 token）</p>
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          {done ? (
+            <button onClick={onImported} className="action-primary">
+              <Check className="h-4 w-4" />
+              完成
+            </button>
+          ) : (
+            <>
+              <button onClick={onClose} className="action-secondary">取消</button>
+              <button onClick={handleImport} disabled={busy || !picked} className="action-primary">
+                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                {busy ? "导入中..." : "开始导入"}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
