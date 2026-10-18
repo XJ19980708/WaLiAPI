@@ -92,10 +92,17 @@ pub fn responses_to_openai(
     };
 
     // max_output_tokens -> max_tokens
+    //
+    // When the Responses request omits `max_output_tokens`, the converted Chat
+    // request must omit `max_tokens` as well: the field is optional in the Chat
+    // Completions API, and omission means "no cap chosen here" so the upstream
+    // applies its own limit. A synthesized default silently truncates long
+    // answers (finish_reason=length), and clients such as Codex never send the
+    // field at all. The cap also budgets reasoning tokens, so a conservative
+    // constant truncates thinking-heavy turns even earlier.
     let max_tokens = body
         .get("max_output_tokens")
-        .and_then(|m| m.as_u64())
-        .unwrap_or(4096);
+        .and_then(|m| m.as_u64());
 
     let stream = body
         .get("stream")
@@ -105,9 +112,11 @@ pub fn responses_to_openai(
     let mut openai_body = serde_json::json!({
         "model": model,
         "messages": messages,
-        "max_tokens": max_tokens,
         "stream": stream,
     });
+    if let Some(mt) = max_tokens {
+        openai_body["max_tokens"] = serde_json::json!(mt);
+    }
 
     // Pass through temperature if present
     if let Some(temp) = body.get("temperature") {

@@ -313,8 +313,8 @@ fn responses_to_openai_tolerates_codex_controls_and_maps_reasoning_effort() {
     }
     // ...and reasoning.effort is mapped to reasoning_effort.
     assert_eq!(converted["reasoning_effort"], "high");
-    // Legacy max_tokens default is unchanged (4096) on this path.
-    assert_eq!(converted["max_tokens"], 4096);
+    // Omitting max_output_tokens must not synthesize a max_tokens cap.
+    assert!(converted.get("max_tokens").is_none());
 }
 
 #[test]
