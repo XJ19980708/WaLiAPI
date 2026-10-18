@@ -9,7 +9,7 @@
 **OpenAI、Claude、DeepSeek、Gemini などの上流モデルを、ひとつのローカルゲートウェイに統合。**<br>
 **ひとつのキー、ひとつのプロトコル、完全な監査ログで、Claude Code・Codex CLI・Gemini CLI・WaLiCode などの AI コーディングツールに接続。**
 
-[![Version](https://img.shields.io/badge/version-0.4.3-blue.svg)](./src-tauri/tauri.conf.json)
+[![Version](https://img.shields.io/badge/version-0.4.4-blue.svg)](./src-tauri/tauri.conf.json)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](#はじめに)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app)
@@ -381,6 +381,14 @@ WaLiAPI は**ローカル / イントラネット優先**で設計されてい�
 ## 📌 バージョン履歴
 
 完全なリリース履歴（中国語）は[メイン README](README.md#-版本历史) を参照してください。最新リリース：
+
+### v0.4.4 (2026-10-18)
+
+- ✨ **Wiki プロジェクトのエクスポート / インポート（zip バックアップ）**（PR #163、@freakojc）：新規 `services/wiki/backup.rs` がページ Markdown・ソースファイル・画像アセット（トークン含む）・コアデータを zip にパッキング。エクスポート / インポートコマンドと Admin ルートを追加し、UI にエクスポートダイアログを提供
+- 🐛 **ask_wiki 全経路修正**（PR #164、@freakojc）：中国語句読点のバイトスライス panic・画像 URL のネスト解析・推論レベル監査の実際の API Key への帰属・MCP ツール説明の `http://` 二重プレフィックス・チャネルインポート / エクスポートのアイコン向きを修正
+- 🐛 **Responses→Chat 変換の省略時に max_tokens=4096 を注入しない**（PR #165、@ymsy2021）：Codex など Responses クライアントは `max_output_tokens` を送信しないが、旧変換は `max_tokens=4096` をハードコーディングし、長い回答が黙って打ち切られていた（`finish_reason=length`、予算には reasoning トークンも含まれる）。明示的に指定がある場合のみマッピングするよう修正（#162 を修正）
+- 🎨 **推論レベルドロップダウンの統一**（@fuzhengwei）：ナレッジベース設定・Wiki 新規作成ダイアログ・Wiki プロジェクト設定の 3 ヶ所の「推論レベル」ネイティブ `<select>` を共通カスタム Select コンポーネントに置き換え、UI 言語を統一
+- 🔧 バージョンを 0.4.4 に更新（package.json / Cargo.toml / tauri.conf.json / Cargo.lock）
 
 ### v0.4.3 (2026-10-17)
 

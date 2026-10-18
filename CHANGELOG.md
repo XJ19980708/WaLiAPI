@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.4.4 (2026-10-18)
+
+### Wiki 备份与全链路修复（PR #163 #164，@freakojc）
+
+- ✨ **Wiki 项目导出 / 导入 zip 备份恢复**：新增 `services/wiki/backup.rs`（+814），将页面 Markdown、源文件、图片资产（含 token）与核心数据打包为 zip 备份；新增 `export_wiki_backup` / `import_wiki_backup` 命令与管理端路由，前端新增「导出 Wiki 备份」弹窗（选择项目与导出目录，桌面端保存为 `wiki-backup-<项目名>-<时间戳>.zip`）
+- 🐛 **ask_wiki 全链路修复**：修复中文标点按字节切片导致的 panic、图片 URL 嵌套解析、推理档位审计归因到真实 API Key（经知识访问控制链路）、MCP 工具描述双 `http://` 前缀、渠道导入导出图标方向（+132 / -15）
+
+### 协议转换（PR #165，@ymsy2021）
+
+- 🐛 **Responses→Chat 转换缺省时不再注入 max_tokens=4096**：Codex 等 Responses 客户端从不发送 `max_output_tokens`，旧转换将其缺省硬编码为 `max_tokens=4096`，长回答被静默腰斩（`finish_reason=length`），且该预算含 reasoning tokens、高推理档位下思考即可吃满；Chat Completions 的 `max_tokens` 为可选字段，缺省语义应为「不限制、由上游决定」，现仅在请求显式携带 `max_output_tokens` 时映射注入（修复 #162，经 12680 条真实请求跨 6 个上游验证最大输出 24714 tokens 正常）
+
+### UI 统一（@fuzhengwei）
+
+- 🎨 **推理档位下拉框统一**：知识库设置、新建 Wiki 项目弹窗与 Wiki 项目设置三处「推理档位（思考级别）」由原生 `<select>` 替换为统一自定义 Select 组件（白底圆角弹层、选中项 primary 色 + ✓、hover / 键盘导航），原生弹层为系统渲染样式、与整体 UI 语言不一致
+
+### 其他
+
+- 📝 **README 贡献者数据同步**：新增贡献者 ymsy2021（PR #165），更新小傅哥（362 commits）、Jason（24 commits，PR #163 #164）提交数与代码变更统计
+- 🔧 **版本号统一升级至 0.4.4**（package.json / Cargo.toml / tauri.conf.json / Cargo.lock）
+
 ## v0.4.3 (2026-10-17)
 
 ### 软件对接 Link：MCP 能力域升级（@fuzhengwei）
