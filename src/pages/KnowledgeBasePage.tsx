@@ -3199,18 +3199,20 @@ function SettingsTab({ kb, onUpdated }: { kb: KnowledgeBase; onUpdated: (kb: Kno
         <div className="space-y-4">
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">推理档位（思考级别）</label>
-            <select
+            <Select
               value={reasoningEffort}
-              onChange={(e) => setReasoningEffort(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-            >
-              <option value="">跟随默认（不覆盖模型默认）</option>
-              <option value="default">default（模型默认）</option>
-              <option value="none">none（关闭推理）</option>
-              <option value="low">low</option>
-              <option value="medium">medium</option>
-              <option value="high">high</option>
-            </select>
+              onChange={(v) => setReasoningEffort(v)}
+              size="sm"
+              ariaLabel="推理档位（思考级别）"
+              options={[
+                { value: "", label: "跟随默认（不覆盖模型默认）" },
+                { value: "default", label: "default（模型默认）" },
+                { value: "none", label: "none（关闭推理）" },
+                { value: "low", label: "low" },
+                { value: "medium", label: "medium" },
+                { value: "high", label: "high" },
+              ]}
+            />
             <p className="mt-1 text-xs text-slate-400">问答未显式传档位时使用该值；仅对支持 reasoning_effort 的上游有效。</p>
           </div>
           <div>
@@ -4444,18 +4446,20 @@ function CreateWikiProjectModal({ onClose, onCreated }: { onClose: () => void; o
           <div className="rounded-2xl border border-slate-100 p-4">
             <label className="mb-1.5 block text-xs font-medium text-slate-700">推理档位（思考级别）</label>
             <p className="mb-2 text-[11px] text-slate-400">摄入与问答使用的 LLM 推理档位，选择后自动联动 thinking 参数。未配置或选 default 时跟随模型默认。</p>
-            <select
+            <Select
               value={reasoningEffort}
-              onChange={e => setReasoningEffort(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm"
-            >
-              <option value="">跟随模型默认（不写档位/thinking）</option>
-              <option value="default">default（模型默认）</option>
-              <option value="none">none（关闭推理）</option>
-              <option value="low">low</option>
-              <option value="medium">medium</option>
-              <option value="high">high</option>
-            </select>
+              onChange={v => setReasoningEffort(v)}
+              size="sm"
+              ariaLabel="推理档位（思考级别）"
+              options={[
+                { value: "", label: "跟随模型默认（不写档位/thinking）" },
+                { value: "default", label: "default（模型默认）" },
+                { value: "none", label: "none（关闭推理）" },
+                { value: "low", label: "low" },
+                { value: "medium", label: "medium" },
+                { value: "high", label: "high" },
+              ]}
+            />
           </div>
           <div>
             <label className="mb-1.5 block text-xs font-medium text-slate-700">Wiki Schema (CLAUDE.md)</label>
@@ -5975,18 +5979,20 @@ function WikiSettingsTab({ project, onUpdated }: { project: WikiProject; onUpdat
           <div>
             <label className="mb-1.5 block text-xs font-medium text-slate-700">推理档位（思考级别）</label>
             <p className="mb-2 text-[11px] text-slate-400">摄入与问答使用的 LLM 推理档位。未配置或选 default 时不写档位字段与 thinking，完全跟随模型默认（对严格校验的上游最安全）；显式选择档位时自动联动 thinking。</p>
-            <select
+            <Select
               value={reasoningEffort}
-              onChange={e => setReasoningEffort(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm"
-            >
-              <option value="">跟随模型默认（不写档位/thinking）</option>
-              <option value="default">default（模型默认）</option>
-              <option value="none">none（关闭推理）</option>
-              <option value="low">low</option>
-              <option value="medium">medium</option>
-              <option value="high">high</option>
-            </select>
+              onChange={v => setReasoningEffort(v)}
+              size="sm"
+              ariaLabel="推理档位（思考级别）"
+              options={[
+                { value: "", label: "跟随模型默认（不写档位/thinking）" },
+                { value: "default", label: "default（模型默认）" },
+                { value: "none", label: "none（关闭推理）" },
+                { value: "low", label: "low" },
+                { value: "medium", label: "medium" },
+                { value: "high", label: "high" },
+              ]}
+            />
           </div>
           <div>
             <label className="mb-1.5 block text-xs font-medium text-slate-700">温度（0~2）</label>
