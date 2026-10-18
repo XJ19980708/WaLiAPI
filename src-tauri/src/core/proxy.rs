@@ -368,6 +368,12 @@ pub async fn handle_request(
                     sanitized: if security_result.sanitized { 1 } else { 0 },
                     blocked_reason: security_result.blocked_reason.clone(),
                     trace_id: trace_id.clone(),
+                    // 内部调用路径（Wiki ask / RAG 等 legacy proxy）此前不记录档位，
+                    // 审计日志显示横杠。这里从实际发出的请求体取，语义与 endpoint_executor 一致。
+                    reasoning_effort: body
+                        .get("reasoning_effort")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string),
                     // T09: observability fields (route_group / upstream
                     // protocol/endpoint / provider / codec / failure class /
                     // identity revision) are populated on the facade path (T06);
@@ -442,6 +448,12 @@ pub async fn handle_request(
                     sanitized: if security_result.sanitized { 1 } else { 0 },
                     blocked_reason: security_result.blocked_reason.clone(),
                     trace_id: trace_id.clone(),
+                    // 内部调用路径（Wiki ask / RAG 等 legacy proxy）此前不记录档位，
+                    // 审计日志显示横杠。这里从实际发出的请求体取，语义与 endpoint_executor 一致。
+                    reasoning_effort: body
+                        .get("reasoning_effort")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string),
                     // T09: observability fields (route_group / upstream
                     // protocol/endpoint / provider / codec / failure class /
                     // identity revision) are populated on the facade path (T06);

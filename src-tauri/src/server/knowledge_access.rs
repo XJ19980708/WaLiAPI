@@ -23,6 +23,11 @@ pub struct KnowledgeAccess {
     pub kb_ids: Vec<String>,
     pub wiki_project_ids: Vec<String>,
     pub headers: HeaderMap,
+    /// 调用方 API Key 身份（MCP/RAG/Wiki 内部 LLM 调用做审计归因用；
+    /// 此前 ask_wiki 把渠道 ID 当 api_key_id、固定 "Wiki Chat" 当名称，导致
+    /// 审计日志无法按真实密钥过滤）。
+    pub api_key_id: Option<String>,
+    pub api_key_name: Option<String>,
 }
 
 pub async fn get_grants(pool: &sqlx::SqlitePool, id: &str) -> Result<Vec<String>, sqlx::Error> {
@@ -216,6 +221,8 @@ async fn authenticate_inner_with(
         kb_ids,
         wiki_project_ids,
         headers,
+        api_key_id: Some(key.id.clone()),
+        api_key_name: Some(key.name.clone()),
     })
 }
 

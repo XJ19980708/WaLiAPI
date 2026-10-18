@@ -339,12 +339,12 @@ export function ChannelsPage() {
           </div>
         <div className="flex items-center gap-2">
           <><button onClick={handleExport} disabled={exporting} className="action-secondary flex items-center gap-1.5">
-            {exporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+            {exporting ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
             导出
           </button>
           <div className="relative" ref={importMenuRef}>
             <button onClick={() => setShowImportMenu(!showImportMenu)} className="action-secondary flex items-center gap-1.5">
-              <Upload size={16} />
+              <Download size={16} />
               导入
               <ChevronDown size={14} className={`transition-transform ${showImportMenu ? "rotate-180" : ""}`} />
             </button>
