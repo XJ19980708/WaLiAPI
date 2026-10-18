@@ -632,7 +632,7 @@ async fn dispatch_scoped(
                             let mut d = "向 Wiki 提问，获取基于 Wiki 页面的 AI 回答。检索相关页面 → LLM 生成回答 → 返回回答 + 来源引用。".to_string();
                             if let Some(h) = host.as_deref().filter(|h| !h.is_empty()) {
                                 d.push_str(&format!(
-                                    " 图片访问：Wiki 页面中的图片完整地址形如 http://{h}/api/wiki/projects/<project_id>/assets/<token>/<file>。回答引用图片时，必须输出完整 markdown 图片链接 ![描述](http://{h}/api/wiki/...)，禁止省略 host/端口或写成占位符（如 <wiki-host>）。"
+                                    " 图片访问：Wiki 页面中的图片完整地址形如 {h}/api/wiki/projects/<project_id>/assets/<token>/<file>。回答引用图片时，必须输出完整 markdown 图片链接 ![描述]({h}/api/wiki/...)，禁止省略 host/端口或写成占位符（如 <wiki-host>）。"
                                 ));
                             }
                             d
@@ -885,9 +885,16 @@ async fn scoped_wiki_tool_call(
     access
         .require_wiki_project(shared, project_id, true)
         .await?;
-    handle_tool_call(shared, name, args, host)
-        .await
-        .map_err(|e| QueryError::new(StatusCode::BAD_REQUEST, e))
+    handle_tool_call(
+        shared,
+        name,
+        args,
+        host,
+        access.api_key_id.as_deref(),
+        access.api_key_name.as_deref(),
+    )
+    .await
+    .map_err(|e| QueryError::new(StatusCode::BAD_REQUEST, e))
 }
 
 /// Main MCP JSON-RPC handler — async dispatch
@@ -920,7 +927,7 @@ async fn dispatch_jsonrpc_async(
                     if tool["name"].as_str() == Some("ask_wiki") {
                         let base = tool["description"].as_str().unwrap_or("");
                         tool["description"] = serde_json::json!(format!(
-                            "{} 图片访问：Wiki 页面中的图片完整地址形如 http://{h}/api/wiki/projects/<project_id>/assets/<token>/<file>。回答引用图片时，必须输出完整 markdown 图片链接 ![描述](http://{h}/api/wiki/...)，禁止省略 host/端口或写成占位符（如 <wiki-host>）。",
+                            "{} 图片访问：Wiki 页面中的图片完整地址形如 {h}/api/wiki/projects/<project_id>/assets/<token>/<file>。回答引用图片时，必须输出完整 markdown 图片链接 ![描述]({h}/api/wiki/...)，禁止省略 host/端口或写成占位符（如 <wiki-host>）。",
                             base
                         ));
                     }
@@ -946,7 +953,7 @@ async fn dispatch_jsonrpc_async(
                 .cloned()
                 .unwrap_or(serde_json::Value::Object(Default::default()));
 
-            match handle_tool_call(shared, tool_name, &args, host).await {
+            match handle_tool_call(shared, tool_name, &args, host, None, None).await {
                 Ok(result) => McpResponse::success(req.id.clone(), result),
                 Err(e) => McpResponse::error(req.id.clone(), -32603, e),
             }
@@ -1127,6 +1134,9 @@ async fn handle_tool_call(
     tool_name: &str,
     args: &serde_json::Value,
     host: Option<&str>,
+    // 调用方 API Key 身份（scoped 路径由 access 传入，内部 LLM 调用审计归因用）
+    api_key_id: Option<&str>,
+    api_key_name: Option<&str>,
 ) -> Result<serde_json::Value, String> {
     let pool = &shared.state.db.pool;
 
@@ -2283,8 +2293,18 @@ async fn handle_tool_call(
             let top_k = args.get("top_k").and_then(|t| t.as_u64()).unwrap_or(5) as usize;
             let model = args.get("model").and_then(|m| m.as_str());
 
-            let result =
-                wiki_handlers::ask_inner(shared, project_id, question, top_k, model, host).await;
+            let result = wiki_handlers::ask_inner(
+                shared,
+                project_id,
+                question,
+                top_k,
+                model,
+                host,
+                // 审计归因：真实调用方 API Key（修 prior 把渠道 ID 当 api_key_id 的缺陷）
+                api_key_id,
+                api_key_name,
+            )
+            .await;
 
             match result {
                 Ok(json) => Ok(serde_json::json!({

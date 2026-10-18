@@ -424,6 +424,8 @@ pub async fn ask(
         top_k,
         model,
         base_url.as_deref(),
+        None,
+        None,
     )
     .await
     {
@@ -478,8 +480,40 @@ fn collect_asset_map(text: &str, project_id: &str, out: &mut Vec<(String, String
 fn expand_image_refs(text: &str, assets: &[(String, String)], base_url: Option<&str>) -> String {
     let base = base_url.filter(|b| !b.is_empty()).unwrap_or("");
     let mut out = text.to_string();
-    // 1) 保护已含完整地址的引用（避免二次改写为嵌套结构）
     let mut guards: Vec<(String, String)> = Vec::new();
+
+    // 0) 先整体保护"已是完整绝对地址"的图片 URL（http(s)://…/api/wiki/projects/<pid>/assets/<32hex>/<file>）。
+    //    不依赖 asset_map —— LLM 可能引用 snippet 未收集到的图片；否则后续把"裸文件名"替换成
+    //    markdown 图片时，会连 URL 内部的文件名也误替换，产生嵌套损坏（实测：
+    //    …/assets/ea2d…/![page-2-1.jpg](http://…)）。
+    let marker = "/api/wiki/projects/";
+    let mut scan = 0usize;
+    while scan < out.len() {
+        let Some(pos) = out[scan..].find(marker) else { break };
+        let abs_pos = scan + pos;
+        let head = &out[..abs_pos];
+        let scheme_start = ["http://", "https://"]
+            .iter()
+            .filter_map(|s| head.rfind(s))
+            .max();
+        if let Some(ss) = scheme_start {
+            let marker_end = abs_pos + marker.len();
+            let after = &out[marker_end..];
+            let end = after
+                .find(|c: char| c.is_whitespace() || matches!(c, ')' | ']' | '\'' | '"'))
+                .unwrap_or(after.len());
+            let url_end = marker_end + end;
+            let abs_url = out[ss..url_end].to_string();
+            let guard = format!("\u{0}ABS{}X\u{0}", guards.len());
+            out = format!("{}{}{}", &out[..ss], guard, &out[url_end..]);
+            guards.push((guard.clone(), abs_url));
+            scan = ss + guard.len();
+        } else {
+            scan = abs_pos + marker.len();
+        }
+    }
+
+    // 1) 保护已含完整地址的引用（避免二次改写为嵌套结构）
     for (i, (_, rel)) in assets.iter().enumerate() {
         let abs = format!("{base}{rel}");
         let guard = format!("\u{0}IMG{i}X\u{0}");
@@ -564,7 +598,9 @@ fn url_prefix_segment_start(before: &str) -> Option<usize> {
     // 段起点 = scheme 之前最近的分隔符之后；分隔符不含 < > （占位符 <wiki-host> 属于同一段）
     let head = &before[..scheme_pos];
     let start = head
-        .rfind(|c: char| {
+        .char_indices()
+        .rev()
+        .find(|(_, c)| {
             c.is_whitespace()
                 || matches!(
                     c,
@@ -585,7 +621,9 @@ fn url_prefix_segment_start(before: &str) -> Option<usize> {
                         | '）'
                 )
         })
-        .map(|p| p + 1)
+        // 用该 char 的 UTF-8 长度前进：中文标点（：，。等）为 3 字节，
+        // 旧实现 `p + 1` 会切在字符中间 → panic: byte index is not a char boundary。
+        .map(|(p, c)| p + c.len_utf8())
         .unwrap_or(0);
     // 段内若含空白则不是同一 URL 段（例如上一句里的 http:// 与本 URL 无关）
     let segment = &before[start..];
@@ -659,6 +697,10 @@ pub async fn ask_inner(
     top_k: usize,
     model_override: Option<&str>,
     base_url: Option<&str>,
+    // 调用方 API Key 身份（MCP ask_wiki 传真实 key，审计日志按此归因；
+    // HTTP 面板路径为 None，回退到渠道 ID + "Wiki Chat"）。
+    client_key_id: Option<&str>,
+    client_key_name: Option<&str>,
 ) -> Result<serde_json::Value, String> {
     let pool = &shared.state.db.pool;
     let repo = WikiRepository::new(pool.clone());
@@ -774,11 +816,15 @@ pub async fn ask_inner(
     }
     let chat_request_str: String = serde_json::to_string(&chat_request).unwrap_or_default();
 
+    // 审计归因：有真实调用方 key 用 key；否则回退到渠道 ID + "Wiki Chat"（历史行为）。
+    let log_api_key_id: &str = client_key_id.unwrap_or(&chat_channel_id);
+    let log_api_key_name: &str = client_key_name.unwrap_or("Wiki Chat");
+
     let proxy_result = proxy::handle_request(
         &db_repo,
         &settings,
-        &chat_channel_id,
-        "Wiki Chat",
+        log_api_key_id,
+        log_api_key_name,
         chat_request,
         false,
         Some(chat_request_str),
@@ -1026,6 +1072,17 @@ mod tests {
 
         // ⑤ 无 base 时原样（不误改）
         assert_eq!(absolutize_asset_urls(&text, None), text);
+
+        // ⑥ 中文标点作分隔符 + 同段含真实 URL + 图片 marker → 不得 panic（真实页面场景）
+        // 「湖南省政务数据共享网站」页含 `门户地址：` + `http://59.232.3.14:18080/portal/home`
+        // 与图片链接；marker 前最近分隔符是中文冒号 `：`（UTF-8 3 字节）。
+        // 旧实现用 `p + 1` 前进 1 字节，会切在 `：` 中间 → panic: byte index is not a char boundary
+        let real = format!(
+            "**门户地址**：`http://59.232.3.14:18080/portal/home`\n\n![x]({rel})"
+        );
+        let out = absolutize_asset_urls(&real, Some(base));
+        assert!(out.contains(rel), "{out}");
+        assert!(out.contains(&format!("{base}{rel}")), "{out}");
     }
 
     /// 用户实测场景：LLM 在回答里省略了图片 URL 前缀（`.../assets/<hash>/file`）。
@@ -1061,6 +1118,27 @@ mod tests {
             full.matches("assets/").count()
         );
         assert!(!once.contains("projects/p/assets/projects/"));
+    }
+
+    /// 回归：完整绝对 URL 的图片引用**绝不嵌套**（即使 asset_map 包含该文件）。
+    /// 实测曾在 `…/assets/<32hex>/![page-x.jpg](…)` 处嵌套损坏：expand_image_refs 的
+    /// "裸文件名"替换把完整 URL 内部的文件名也换成了 markdown 图片。
+    #[test]
+    fn expand_image_refs_never_nests_full_absolute_urls() {
+        let base = "http://127.0.0.1:1133";
+        let h = "0".repeat(32);
+        let rel = format!("/api/wiki/projects/p/assets/{h}/page-2-1.jpg");
+        let text = format!("![page 2 screenshot 1]({base}{rel})  后文继续");
+        // asset_map 恰好含该文件：若"完整 URL 保护"失效，step2 会把 URL 内部文件名
+        // 再替换成 markdown 图片 → 嵌套损坏。
+        let assets = vec![("page-2-1.jpg".to_string(), rel.clone())];
+        let out = expand_image_refs(&text, &assets, Some(base));
+        assert!(!out.contains("![page-2-1.jpg]"), "嵌套损坏: {out}");
+        assert!(out.contains("![page 2 screenshot 1]("), "完整图片被破坏: {out}");
+        // 裸文件名（非 URL 内）仍应被补全
+        let bare = format!("见附件 {base}{rel} 或直接查看 page-2-1.jpg");
+        let out2 = expand_image_refs(&bare, &assets, Some(base));
+        assert!(out2.contains("![page-2-1.jpg]("), "裸文件名应补全: {out2}");
     }
 
     #[test]
