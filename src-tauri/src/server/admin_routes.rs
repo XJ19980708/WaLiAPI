@@ -1046,6 +1046,35 @@ async fn dispatch(shared: &SharedState, cmd: &str, args: Value) -> Result<Value,
         "rescan_wiki_sources" => {
             to_json(commands::wiki::rescan_wiki_sources(state, arg(&args, "projectId")?).await)
         }
+        // ── Wiki 备份：导出 / 导入 ──
+        "export_wiki_project" => to_json(
+            commands::wiki::export_wiki_project(
+                state,
+                arg(&args, "projectId")?,
+                arg(&args, "targetDir")?,
+            )
+            .await,
+        ),
+        "import_wiki_backup" => {
+            to_json(commands::wiki::import_wiki_backup(state, arg(&args, "path")?).await)
+        }
+        "import_wiki_backup_bytes" => {
+            to_json(commands::wiki::import_wiki_backup_bytes(state, arg(&args, "base64")?).await)
+        }
+        #[cfg(feature = "desktop-ui")]
+        "pick_wiki_export_dir" => {
+            let app = desktop_app("导出目录选择")?;
+            to_json(commands::wiki::pick_wiki_export_dir(app.clone()).await)
+        }
+        #[cfg(not(feature = "desktop-ui"))]
+        "pick_wiki_export_dir" => Err("目录选择仅桌面版可用，请填写服务器路径".to_string()),
+        #[cfg(feature = "desktop-ui")]
+        "pick_wiki_import_file" => {
+            let app = desktop_app("备份文件选择")?;
+            to_json(commands::wiki::pick_wiki_import_file(app.clone()).await)
+        }
+        #[cfg(not(feature = "desktop-ui"))]
+        "pick_wiki_import_file" => Err("文件选择仅桌面版可用，请在浏览器中选择备份文件".to_string()),
 
         // ── 应用配置（容器内通常全部不可用，由前端置灰）──
         "get_app_configs" => to_json(commands::app_config::get_app_configs(state).await),

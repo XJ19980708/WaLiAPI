@@ -486,3 +486,92 @@ pub async fn rescan_wiki_sources(
         "results": results,
     }))
 }
+
+// ── Wiki 项目备份：导出 / 导入 ──────────────────────────────────────────────
+
+/// 导出指定 Wiki 项目为 zip 备份到 `target_dir`（本地目录）。
+#[tauri::command]
+pub async fn export_wiki_project(
+    state: State<'_, Arc<AppState>>,
+    project_id: String,
+    target_dir: String,
+) -> Result<crate::services::wiki::backup::WikiExportResult, String> {
+    crate::services::wiki::backup::export_project(&state.db.pool, &project_id, &target_dir).await
+}
+
+/// 从本地 zip 备份文件导入（桌面端：对话框选中文件后传路径）。
+#[tauri::command]
+pub async fn import_wiki_backup(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+) -> Result<crate::services::wiki::backup::WikiImportResult, String> {
+    crate::services::wiki::backup::import_backup_from_path(&state.db.pool, &path).await
+}
+
+/// 从 zip 备份字节导入（Web 端：浏览器选中文件读为 base64 传入）。
+#[tauri::command]
+pub async fn import_wiki_backup_bytes(
+    state: State<'_, Arc<AppState>>,
+    base64: String,
+) -> Result<crate::services::wiki::backup::WikiImportResult, String> {
+    let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &base64)
+        .map_err(|e| format!("备份文件解码失败: {e}"))?;
+    crate::services::wiki::backup::import_backup_from_bytes(&state.db.pool, &bytes).await
+}
+
+/// 打开目录选择对话框，返回选中的导出目录路径（仅桌面端；Web 端直接填服务器路径）。
+#[tauri::command]
+pub async fn pick_wiki_export_dir(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    #[cfg(not(feature = "desktop-ui"))]
+    {
+        let _ = &app;
+        Err("目录选择仅桌面版可用，请在输入框中直接填写服务器路径".to_string())
+    }
+    #[cfg(feature = "desktop-ui")]
+    {
+        use tauri_plugin_dialog::DialogExt;
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        app.dialog()
+            .file()
+            .pick_folder(move |folder_path| {
+                let result = folder_path.and_then(|f| {
+                    f.into_path()
+                        .ok()
+                        .map(|p| p.to_string_lossy().to_string())
+                });
+                let _ = tx.send(result);
+            });
+        let result = rx.await.map_err(|_| "对话框取消".to_string())?;
+        Ok(result)
+    }
+}
+
+/// 打开文件选择对话框，返回选中的 zip 备份路径（仅桌面端；Web 端用浏览器文件选择器）。
+#[tauri::command]
+pub async fn pick_wiki_import_file(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    #[cfg(not(feature = "desktop-ui"))]
+    {
+        let _ = &app;
+        Err("文件选择仅桌面版可用，请在浏览器中选择备份文件".to_string())
+    }
+    #[cfg(feature = "desktop-ui")]
+    {
+        use tauri_plugin_dialog::DialogExt;
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        app.dialog()
+            .file()
+            .add_filter("Wiki 备份", &["zip"])
+            .pick_file(move |file_path| {
+                let result = file_path.and_then(|f| {
+                    f.into_path()
+                        .ok()
+                        .map(|p| p.to_string_lossy().to_string())
+                });
+                let _ = tx.send(result);
+            });
+        let result = rx.await.map_err(|_| "对话框取消".to_string())?;
+        Ok(result)
+    }
+}

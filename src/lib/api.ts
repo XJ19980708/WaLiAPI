@@ -580,6 +580,24 @@ export interface CreateWikiProjectInput {
     schema_text?: string;
 }
 
+export interface WikiExportResult {
+    path: string;
+    project_id: string;
+    project_name: string;
+    page_count: number;
+    source_count: number;
+    file_count: number;
+    size_bytes: number;
+}
+
+export interface WikiImportResult {
+    project_id: string;
+    project_name: string;
+    page_count: number;
+    source_count: number;
+    file_count: number;
+}
+
 export interface UpdateWikiProjectInput {
     name?: string;
     description?: string;
@@ -689,6 +707,13 @@ export const wikiApi = {
     cancelIngest: (projectId: string, sourceId: string) => invoke<{ status: string }>("cancel_wiki_ingest", { projectId, sourceId }),
     rescanSources: (projectId: string) => invoke<{ status: string; processed: number; results: unknown[] }>("rescan_wiki_sources", { projectId }),
     getTags: (projectId: string, limit?: number) => invoke<WikiTag[]>("get_wiki_tags", { projectId, limit }),
+    // ── 备份：导出 zip / 导入恢复 ──
+    exportProject: (projectId: string, targetDir: string) =>
+        invoke<WikiExportResult>("export_wiki_project", { projectId, targetDir }),
+    importBackup: (path: string) => invoke<WikiImportResult>("import_wiki_backup", { path }),
+    importBackupBytes: (base64: string) => invoke<WikiImportResult>("import_wiki_backup_bytes", { base64 }),
+    pickExportDir: () => invoke<string | null>("pick_wiki_export_dir"),
+    pickImportFile: () => invoke<string | null>("pick_wiki_import_file"),
 };
 
 // Service status
