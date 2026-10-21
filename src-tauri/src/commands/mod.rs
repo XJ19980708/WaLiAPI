@@ -12,5 +12,6 @@ pub mod security;
 pub mod server;
 pub mod services;
 pub mod settings;
+pub mod software;
 pub mod stats;
 pub mod wiki;

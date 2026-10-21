@@ -50,6 +50,42 @@ export function downloadTextFile(content: string, filename: string) {
   URL.revokeObjectURL(url);
 }
 
+/** 浏览器文件选择器：读取选中文件的二进制内容为 base64（含文件名），取消时 resolve null。 */
+export function pickFileAsBase64(accept: string): Promise<{ name: string; base64: string } | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = accept;
+    input.style.display = "none";
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      input.remove();
+      if (!file) {
+        resolve(null);
+        return;
+      }
+      try {
+        const buffer = await file.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        let binary = "";
+        const chunk = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunk) {
+          binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+        }
+        resolve({ name: file.name, base64: btoa(binary) });
+      } catch {
+        resolve(null);
+      }
+    };
+    input.oncancel = () => {
+      input.remove();
+      resolve(null);
+    };
+    document.body.appendChild(input);
+    input.click();
+  });
+}
+
 const ADMIN_TOKEN_KEY = "waliapi_admin_token";
 
 /**

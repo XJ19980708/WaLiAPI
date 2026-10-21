@@ -1,6 +1,7 @@
 pub mod channel_test;
 pub mod knowledge;
 pub mod mcp;
+pub mod software;
 pub mod upstream_models;
 pub mod wiki;
 
@@ -50,6 +51,7 @@ impl ServiceRegistry {
         let mut registry = Self { services: vec![] };
         registry.register(Box::new(knowledge::KnowledgeService));
         registry.register(Box::new(mcp::McpService));
+        registry.register(Box::new(software::SoftwareService));
         registry.register(Box::new(wiki::WikiService));
         registry
     }

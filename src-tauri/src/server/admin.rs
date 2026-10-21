@@ -183,7 +183,9 @@ pub async fn require_mcp(
     {
         return next.run(request).await;
     }
-    let access = match super::knowledge_access::authenticate(&shared, &headers).await {
+    // /mcp 允许无 KB/Wiki 授权的 API Key 通过：software 能力域不依赖 KB/Wiki
+    // 授权（scoped 分发层只见 software 工具），KB/Wiki 工具对空授权不可见。
+    let access = match super::knowledge_access::authenticate_with(&shared, &headers, true).await {
         Ok(access) => access,
         Err(error) => return error.into_response(),
     };

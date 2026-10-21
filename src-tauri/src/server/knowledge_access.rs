@@ -23,6 +23,11 @@ pub struct KnowledgeAccess {
     pub kb_ids: Vec<String>,
     pub wiki_project_ids: Vec<String>,
     pub headers: HeaderMap,
+    /// 调用方 API Key 身份（MCP/RAG/Wiki 内部 LLM 调用做审计归因用；
+    /// 此前 ask_wiki 把渠道 ID 当 api_key_id、固定 "Wiki Chat" 当名称，导致
+    /// 审计日志无法按真实密钥过滤）。
+    pub api_key_id: Option<String>,
+    pub api_key_name: Option<String>,
 }
 
 pub async fn get_grants(pool: &sqlx::SqlitePool, id: &str) -> Result<Vec<String>, sqlx::Error> {
@@ -35,7 +40,10 @@ pub async fn get_grants(pool: &sqlx::SqlitePool, id: &str) -> Result<Vec<String>
 }
 
 /// Wiki 项目的查询授权（与 RAG 平行的独立维度）。
-pub async fn get_wiki_grants(pool: &sqlx::SqlitePool, id: &str) -> Result<Vec<String>, sqlx::Error> {
+pub async fn get_wiki_grants(
+    pool: &sqlx::SqlitePool,
+    id: &str,
+) -> Result<Vec<String>, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT project_id FROM api_key_wiki_access WHERE api_key_id = ? ORDER BY project_id",
     )
@@ -59,7 +67,10 @@ pub async fn set_wiki_grants(
         .bind(id)
         .execute(&mut *tx)
         .await?;
-    for project_id in project_ids.iter().collect::<std::collections::BTreeSet<_>>() {
+    for project_id in project_ids
+        .iter()
+        .collect::<std::collections::BTreeSet<_>>()
+    {
         sqlx::query("INSERT INTO api_key_wiki_access (api_key_id, project_id) VALUES (?, ?)")
             .bind(id)
             .bind(project_id)
@@ -98,9 +109,20 @@ pub async fn authenticate(
     shared: &SharedState,
     headers: &HeaderMap,
 ) -> Result<KnowledgeAccess, QueryError> {
+    authenticate_with(shared, headers, false).await
+}
+
+/// `allow_empty_grants`：允许无 KB/Wiki 授权的 API Key 通过入口（仅 /mcp 软件域使用）。
+/// REST /api/kb 保持严格：无授权一律拒绝。空授权的 access 在 scoped 分发层
+/// 自然看不到任何 KB/Wiki 工具，software 工具不受 KB/Wiki 授权约束。
+pub async fn authenticate_with(
+    shared: &SharedState,
+    headers: &HeaderMap,
+    allow_empty_grants: bool,
+) -> Result<KnowledgeAccess, QueryError> {
     // 使用服务端生成的编号，避免客户端把凭据等敏感内容伪装成关联编号。
     let request_id = uuid::Uuid::new_v4().to_string();
-    let result = authenticate_inner(shared, headers).await;
+    let result = authenticate_inner_with(shared, headers, allow_empty_grants).await;
     match result {
         Ok(mut access) => {
             access.headers.insert(
@@ -131,6 +153,14 @@ pub async fn authenticate(
 async fn authenticate_inner(
     shared: &SharedState,
     headers: &HeaderMap,
+) -> Result<KnowledgeAccess, QueryError> {
+    authenticate_inner_with(shared, headers, false).await
+}
+
+async fn authenticate_inner_with(
+    shared: &SharedState,
+    headers: &HeaderMap,
+    allow_empty_grants: bool,
 ) -> Result<KnowledgeAccess, QueryError> {
     let token = headers
         .get("authorization")
@@ -171,7 +201,9 @@ async fn authenticate_inner(
             )
         })?;
     // RAG 与 Wiki 任一有授权即可通过入口；两者皆空才拒绝。
-    if kb_ids.is_empty() && wiki_project_ids.is_empty() {
+    // /mcp 场景（allow_empty_grants）放行：software 能力域不依赖 KB/Wiki 授权，
+    // 空授权 access 在 scoped 分发层看不到任何 KB/Wiki 工具，无越权面。
+    if kb_ids.is_empty() && wiki_project_ids.is_empty() && !allow_empty_grants {
         return Err(QueryError::new(
             StatusCode::FORBIDDEN,
             "请在密钥页面授予该 API Key 知识库或 Wiki 查询权限",
@@ -189,6 +221,8 @@ async fn authenticate_inner(
         kb_ids,
         wiki_project_ids,
         headers,
+        api_key_id: Some(key.id.clone()),
+        api_key_name: Some(key.name.clone()),
     })
 }
 

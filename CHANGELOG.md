@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.4.4 (2026-10-18)
+
+### Wiki 备份与全链路修复（PR #163 #164，@freakojc）
+
+- ✨ **Wiki 项目导出 / 导入 zip 备份恢复**：新增 `services/wiki/backup.rs`（+814），将页面 Markdown、源文件、图片资产（含 token）与核心数据打包为 zip 备份；新增 `export_wiki_backup` / `import_wiki_backup` 命令与管理端路由，前端新增「导出 Wiki 备份」弹窗（选择项目与导出目录，桌面端保存为 `wiki-backup-<项目名>-<时间戳>.zip`）
+- 🐛 **ask_wiki 全链路修复**：修复中文标点按字节切片导致的 panic、图片 URL 嵌套解析、推理档位审计归因到真实 API Key（经知识访问控制链路）、MCP 工具描述双 `http://` 前缀、渠道导入导出图标方向（+132 / -15）
+
+### 协议转换（PR #165，@ymsy2021）
+
+- 🐛 **Responses→Chat 转换缺省时不再注入 max_tokens=4096**：Codex 等 Responses 客户端从不发送 `max_output_tokens`，旧转换将其缺省硬编码为 `max_tokens=4096`，长回答被静默腰斩（`finish_reason=length`），且该预算含 reasoning tokens、高推理档位下思考即可吃满；Chat Completions 的 `max_tokens` 为可选字段，缺省语义应为「不限制、由上游决定」，现仅在请求显式携带 `max_output_tokens` 时映射注入（修复 #162，经 12680 条真实请求跨 6 个上游验证最大输出 24714 tokens 正常）
+
+### UI 统一（@fuzhengwei）
+
+- 🎨 **推理档位下拉框统一**：知识库设置、新建 Wiki 项目弹窗与 Wiki 项目设置三处「推理档位（思考级别）」由原生 `<select>` 替换为统一自定义 Select 组件（白底圆角弹层、选中项 primary 色 + ✓、hover / 键盘导航），原生弹层为系统渲染样式、与整体 UI 语言不一致
+
+### 其他
+
+- 📝 **README 贡献者数据同步**：新增贡献者 ymsy2021（PR #165），更新小傅哥（362 commits）、Jason（24 commits，PR #163 #164）提交数与代码变更统计
+- 🔧 **版本号统一升级至 0.4.4**（package.json / Cargo.toml / tauri.conf.json / Cargo.lock）
+
+## v0.4.3 (2026-10-17)
+
+### 软件对接 Link：MCP 能力域升级（@fuzhengwei）
+
+- ✨ **MCP 能力域重构为「软件对接（Link）」**：`services/mcp` 演进为 `services/software`，侧边栏与知识库页新增 Link 入口（测试功能 · 开发迭代中）；命令层、MCP handlers、服务端路由与 Admin 路由、知识访问控制同步适配
+- ✨ **OpenAPI / Swagger 规范一键导入**：新增 `services/software/openapi_import.rs`，OpenAPI 3.x / Swagger 2.0（JSON/YAML）粘贴即转为 generic_http 连接器配置——每个 operation 生成一个 MCP 工具，工具名 / 路径参数 / 查询参数 / 请求体自动映射，风险级别按方法推导（GET → read_only、DELETE → high_write），导入结果经连接器配置自检后返回
+- ✨ **MCP 对话式实例管理**：新增 `services/software/mcp_mgmt.rs`，外部 AI Agent 通过 `/mcp` 即可发现连接器、导入 OpenAPI、创建 / 更新 / 删除软件实例；删除操作要求显式 `confirm: true`，实例级工具另受审批策略（approval_mode）闸门约束
+- ✨ **CLI-Hub 社区目录集成**：接入 [CLI-Anything](https://github.com/HKUDS/CLI-Anything) 社区目录（103+ 软件），支持一键安装 + 创建实例；新增 `ClihubConnector`（`help` 探索命令面 / `run` 执行子命令双工具，子进程直接 exec 不经 shell）；hub 未安装时回退内置精选目录
+- 🎨 **软件对接页面重构**：SoftwarePage 大幅重构，实例管理与在线调试体验优化；知识库页新增「可用工具」列表与密钥试调入口（RAG 查询用 API Key、管理工具与 Wiki 用 MCP Token）
+- 🐛 **桌面端 /mcp 在线调用代理**：新增 `mcp_online_call` 命令，由 Rust 侧代理请求本机 `/mcp`（no_proxy 直连回环地址），绕开 WKWebView 对 http:// 回环地址的混合内容 / CORS 限制（TypeError: Load failed）
+
+### Qoder 流式修复（@fuzhengwei）
+
+- 🐛 **Qoder 流式解码组帧修复**：Qoder 网关信封解包后的内层 Chat chunk 原先以裸 JSON 喂给 SSE 解析器，因缺少 `data:` 前缀与记录终止符被静默丢弃，流式请求报「no message_start emitted」（非流式不受影响，Responses 流式客户端必现）；现重新组帧为 SSE 记录，并按下游协议选择内层解码器（Chat 直通合成 `[DONE]` / Responses 事件转换），网关遥测事件不再直通成垃圾帧；新增 6 个真实网关信封流形态回归测试，Responses / Chat / Messages 三下游流式全链路验证通过
+
+### 其他
+
+- 🔧 **版本号统一升级至 0.4.3**（package.json / Cargo.toml / tauri.conf.json / Cargo.lock）
+
 ## v0.4.2 (2026-10-16)
 
 ### Qoder Auth 渠道（@fuzhengwei）

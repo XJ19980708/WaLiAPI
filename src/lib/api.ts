@@ -18,6 +18,10 @@ import type {
   AuthQuotaStatus, AuthUpdateInput, AuthResetCreditsSnapshot, AuthResetOperationResult,
   AuthProviderInfo, AuthLoginMethod,
   PromptTemplate,
+  SoftwareInstance, CreateSoftwareInstanceInput, UpdateSoftwareInstanceInput,
+  SoftwareConnectorInfo, SoftwareToolPreview, SoftwareToolLog,
+  ScannedApp,
+  ClihubCatalog,
 } from "../types";
 
 /**
@@ -309,6 +313,9 @@ export const ocrApi = {
 export const serverApi = {
   getStatus: () => invoke<ServerStatus>("get_server_status"),
   restart: () => invoke<void>("restart_server"),
+  /** 在线调试 /mcp：由 Rust 侧代理请求，绕开 WKWebView 的回环地址限制 */
+  mcpOnlineCall: (auth: string, body: string) =>
+    invoke<{ status: number; body: string }>("mcp_online_call", { auth, body }),
 };
 
 // Import / Export
@@ -573,6 +580,24 @@ export interface CreateWikiProjectInput {
     schema_text?: string;
 }
 
+export interface WikiExportResult {
+    path: string;
+    project_id: string;
+    project_name: string;
+    page_count: number;
+    source_count: number;
+    file_count: number;
+    size_bytes: number;
+}
+
+export interface WikiImportResult {
+    project_id: string;
+    project_name: string;
+    page_count: number;
+    source_count: number;
+    file_count: number;
+}
+
 export interface UpdateWikiProjectInput {
     name?: string;
     description?: string;
@@ -682,6 +707,13 @@ export const wikiApi = {
     cancelIngest: (projectId: string, sourceId: string) => invoke<{ status: string }>("cancel_wiki_ingest", { projectId, sourceId }),
     rescanSources: (projectId: string) => invoke<{ status: string; processed: number; results: unknown[] }>("rescan_wiki_sources", { projectId }),
     getTags: (projectId: string, limit?: number) => invoke<WikiTag[]>("get_wiki_tags", { projectId, limit }),
+    // ── 备份：导出 zip / 导入恢复 ──
+    exportProject: (projectId: string, targetDir: string) =>
+        invoke<WikiExportResult>("export_wiki_project", { projectId, targetDir }),
+    importBackup: (path: string) => invoke<WikiImportResult>("import_wiki_backup", { path }),
+    importBackupBytes: (base64: string) => invoke<WikiImportResult>("import_wiki_backup_bytes", { base64 }),
+    pickExportDir: () => invoke<string | null>("pick_wiki_export_dir"),
+    pickImportFile: () => invoke<string | null>("pick_wiki_import_file"),
 };
 
 // Service status
@@ -743,4 +775,34 @@ export const promptTemplateApi = {
 // 语义缓存管理命令（C-02）
 export const semanticCacheApi = {
   clear: (model?: string) => invoke<number>("clear_semantic_cache", { model: model ?? null }),
+};
+
+// ── 软件对接（Software）───────────────────────────────────────────────────────
+export const softwareApi = {
+  getInstances: () => invoke<SoftwareInstance[]>("get_software_instances"),
+  getCatalog: () => invoke<SoftwareConnectorInfo[]>("get_software_connector_catalog"),
+  create: (input: CreateSoftwareInstanceInput) =>
+    invoke<SoftwareInstance>("create_software_instance", { input }),
+  update: (input: UpdateSoftwareInstanceInput) =>
+    invoke<SoftwareInstance>("update_software_instance", { input }),
+  toggle: (id: number, enabled: boolean) =>
+    invoke<SoftwareInstance>("toggle_software_instance", { id, enabled }),
+  delete: (id: number) => invoke<void>("delete_software_instance", { id }),
+  getTools: (id: number) => invoke<SoftwareToolPreview[]>("get_software_instance_tools", { id }),
+  getLogs: (instanceId?: number, limit?: number) =>
+    invoke<SoftwareToolLog[]>("get_software_tool_logs", { instanceId, limit }),
+  scan: () => invoke<ScannedApp[]>("scan_installed_software"),
+  /** OpenAPI/Swagger 规范导入：返回 { config, tool_count, skipped } */
+  importOpenapi: (spec: string, baseUrl?: string) =>
+    invoke<{ config: Record<string, unknown>; tool_count: number; skipped: string[] }>(
+      "import_openapi",
+      { spec, base_url: baseUrl || undefined },
+    ),
+  /** CLI-Hub（CLI-Anything 社区）目录：hub 未安装时返回内置精选 */
+  getClihubCatalog: () => invoke<ClihubCatalog>("get_clihub_catalog"),
+  /** 安装 CLI-Hub CLI（cli-hub install <name>，耗时操作，返回输出尾部） */
+  installClihubCli: (name: string) => invoke<string>("install_clihub_cli", { name }),
+  /** 已安装的 CLI 一键接入为 Link 实例（connector=clihub） */
+  createClihubInstance: (name: string, mcpEnabled = true) =>
+    invoke<SoftwareInstance>("create_clihub_instance", { name, mcpEnabled }),
 };

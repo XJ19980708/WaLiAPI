@@ -62,7 +62,10 @@ async fn wiki_only_key_can_connect_mcp_and_query_wiki() {
         .unwrap();
     // 撤销全部 RAG 授权，只保留默认获得的 Wiki 授权。
     set_grants(&state.db.pool, &key.id, &[]).await.unwrap();
-    assert!(get_grants(&state.db.pool, &key.id).await.unwrap().is_empty());
+    assert!(get_grants(&state.db.pool, &key.id)
+        .await
+        .unwrap()
+        .is_empty());
     assert_eq!(
         get_wiki_grants(&state.db.pool, &key.id).await.unwrap(),
         vec![project.clone()]
@@ -70,10 +73,13 @@ async fn wiki_only_key_can_connect_mcp_and_query_wiki() {
 
     let app = build_router(state.clone(), test_shared(&state, None, None));
     // 入口不再因「无 RAG 授权」拒绝；tools/list 暴露 Wiki 只读工具。
-    let names = tool_names(
-        &body(app.clone().oneshot(rpc_list(&key.key)).await.unwrap()).await,
-    );
-    for expected in ["list_wiki_projects", "get_wiki_project", "search_wiki", "ask_wiki"] {
+    let names = tool_names(&body(app.clone().oneshot(rpc_list(&key.key)).await.unwrap()).await);
+    for expected in [
+        "list_wiki_projects",
+        "get_wiki_project",
+        "search_wiki",
+        "ask_wiki",
+    ] {
         assert!(
             names.iter().any(|n| n == expected),
             "缺少 Wiki 工具 {expected}: {names:?}"
@@ -154,7 +160,11 @@ async fn scoped_wiki_tools_respect_grants_and_mcp_flag() {
     // 未授权项目：拒绝。
     let denied = body(
         app.clone()
-            .oneshot(rpc(&key.key, "get_wiki_project", json!({"project_id": other})))
+            .oneshot(rpc(
+                &key.key,
+                "get_wiki_project",
+                json!({"project_id": other}),
+            ))
             .await
             .unwrap(),
     )
@@ -173,7 +183,11 @@ async fn scoped_wiki_tools_respect_grants_and_mcp_flag() {
         .unwrap();
     let hidden = body(
         app.clone()
-            .oneshot(rpc(&key.key, "get_wiki_project", json!({"project_id": granted})))
+            .oneshot(rpc(
+                &key.key,
+                "get_wiki_project",
+                json!({"project_id": granted}),
+            ))
             .await
             .unwrap(),
     )
@@ -214,7 +228,10 @@ async fn wiki_asset_route_serves_by_token_and_rejects_traversal() {
             .await
             .unwrap();
         assert!(
-            matches!(response.status(), StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST),
+            matches!(
+                response.status(),
+                StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST
+            ),
             "路径应 404/400 而非泄露文件: {path} => {}",
             response.status()
         );
@@ -593,7 +610,10 @@ async fn mcp_limits_tools_exposure_and_legacy_sessions() {
             .unwrap(),
     )
     .await;
-    assert_eq!(result["result"]["tools"].as_array().unwrap().len(), 5);
+    // 5 个 RAG 查询工具 + 10 个 software_* 管理工具（7 基础 + 3 clihub，产品约定：
+    // API Key 默认可操作 software 能力域）；破坏性 KB 工具仍不可见。
+    // setup 无软件实例，动态工具为 0。
+    assert_eq!(result["result"]["tools"].as_array().unwrap().len(), 15);
     assert!(!result.to_string().contains("delete_knowledge_base"));
     let result = body(
         app.clone()
@@ -771,7 +791,11 @@ async fn rag_reasoning_levels_reach_the_canonical_gateway_body_without_claiming_
             // 档位与 thinking 联动（用户要求）：启用类→enabled，none→disabled
             assert_eq!(
                 sent["thinking"]["type"],
-                if level == "none" { "disabled" } else { "enabled" }
+                if level == "none" {
+                    "disabled"
+                } else {
+                    "enabled"
+                }
             );
         } else {
             assert!(result.get("reasoning").is_none());

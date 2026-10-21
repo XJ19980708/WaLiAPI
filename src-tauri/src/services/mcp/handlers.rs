@@ -46,7 +46,13 @@ RAG 已预建索引：文档已解析、分块、向量化并存入本地 SQLite
 ## 代码文件
 
 RAG 中的代码文件按符号边界分块（函数/类/方法），每个 chunk 是完整符号。
-chunk metadata 包含 symbol_name、symbol_kind、signature，可用于精确过滤。"#;
+chunk metadata 包含 symbol_name、symbol_kind、signature，可用于精确过滤。
+
+## Link 软件对接配置（software_* 管理工具）
+
+用户想接入软件/API 时，可通过 software_list_connectors → software_import_openapi
+（HTTP API 场景）→ software_create_instance 的流程对话式完成配置；
+删除实例必须先获用户明确确认再传 confirm=true。"#;
 
 // ── Session management for SSE transport ──────────────────────────
 // Each SSE client gets a unique session_id. The POST handler uses
@@ -119,7 +125,7 @@ impl McpResponse {
 // ── MCP tool definitions ──────────────────────────────────────────
 
 pub(crate) fn get_tools() -> Vec<serde_json::Value> {
-    vec![
+    let mut tools: Vec<serde_json::Value> = vec![
         // ── Read-only tools (existing) ───────────────────────────
         serde_json::json!({
             "name": "search_knowledge_base",
@@ -551,7 +557,11 @@ pub(crate) fn get_tools() -> Vec<serde_json::Value> {
             props.insert("diagnostics".into(), serde_json::json!({"type":"boolean","default":false,"description":"仅普通 API Key 可启用真实权限及阶段诊断。"}));
         }
         tool
-    }).collect()
+    }).collect();
+    // Link 管理工具：AI Agent 对话式配置软件对接实例（API Key 与全量模式均可达）。
+    // 定义见 services/software/mcp_mgmt.rs。
+    tools.extend(crate::services::software::mcp_mgmt::tool_defs());
+    tools
 }
 
 // ── Core JSON-RPC dispatch ────────────────────────────────────────
@@ -597,7 +607,7 @@ async fn dispatch_scoped(
             }),
         ),
         "tools/list" => {
-            let tools: Vec<_> = get_tools()
+            let mut tools: Vec<_> = get_tools()
                 .into_iter()
                 .filter(|tool| {
                     let name = tool["name"].as_str().unwrap_or("");
@@ -622,7 +632,7 @@ async fn dispatch_scoped(
                             let mut d = "向 Wiki 提问，获取基于 Wiki 页面的 AI 回答。检索相关页面 → LLM 生成回答 → 返回回答 + 来源引用。".to_string();
                             if let Some(h) = host.as_deref().filter(|h| !h.is_empty()) {
                                 d.push_str(&format!(
-                                    " 图片访问：Wiki 页面中的图片完整地址形如 http://{h}/api/wiki/projects/<project_id>/assets/<token>/<file>。回答引用图片时，必须输出完整 markdown 图片链接 ![描述](http://{h}/api/wiki/...)，禁止省略 host/端口或写成占位符（如 <wiki-host>）。"
+                                    " 图片访问：Wiki 页面中的图片完整地址形如 {h}/api/wiki/projects/<project_id>/assets/<token>/<file>。回答引用图片时，必须输出完整 markdown 图片链接 ![描述]({h}/api/wiki/...)，禁止省略 host/端口或写成占位符（如 <wiki-host>）。"
                                 ));
                             }
                             d
@@ -654,10 +664,44 @@ async fn dispatch_scoped(
                     tool
                 })
                 .collect();
+            // 软件对接（Link）：API Key 默认可操作——管理工具 + 已启用实例的动态工具
+            // （产品约定：API Key 与 MCP Token 同权访问 software 能力域；
+            //   实例级审批闸门仍在 mcp_bridge::call_tool 内生效）
+            tools.extend(crate::services::software::mcp_mgmt::tool_defs());
+            tools.extend(
+                crate::services::software::mcp_bridge::list_enabled_tools(&shared.state.db.pool)
+                    .await,
+            );
             McpResponse::success(req.id.clone(), serde_json::json!({"tools": tools}))
         }
         "tools/call" => {
             let name = req.params["name"].as_str().unwrap_or("");
+            // 软件对接：API Key 默认可操作（实例工具 + 管理工具），与全量模式同一路径
+            if name.starts_with("software__") {
+                return match crate::services::software::mcp_bridge::call_tool(
+                    &shared.state,
+                    name,
+                    &req.params["arguments"],
+                )
+                .await
+                {
+                    Ok(v) => McpResponse::success(req.id.clone(), v),
+                    Err(e) => McpResponse::error(req.id.clone(), -32603, e),
+                };
+            }
+            if crate::services::software::mcp_mgmt::TOOL_NAMES.contains(&name) {
+                return match crate::services::software::mcp_mgmt::try_handle(
+                    &shared.state,
+                    name,
+                    &req.params["arguments"],
+                )
+                .await
+                {
+                    Some(Ok(v)) => McpResponse::success(req.id.clone(), v),
+                    Some(Err(e)) => McpResponse::error(req.id.clone(), -32603, e),
+                    None => McpResponse::error(req.id.clone(), -32601, "Unknown tool".into()),
+                };
+            }
             if !QUERY_TOOLS.contains(&name) && !WIKI_QUERY_TOOLS.contains(&name) {
                 return McpResponse::error(
                     req.id.clone(),
@@ -838,10 +882,19 @@ async fn scoped_wiki_tool_call(
         return Ok(serde_json::json!(list));
     }
     let project_id = args["project_id"].as_str().unwrap_or("");
-    access.require_wiki_project(shared, project_id, true).await?;
-    handle_tool_call(shared, name, args, host)
-        .await
-        .map_err(|e| QueryError::new(StatusCode::BAD_REQUEST, e))
+    access
+        .require_wiki_project(shared, project_id, true)
+        .await?;
+    handle_tool_call(
+        shared,
+        name,
+        args,
+        host,
+        access.api_key_id.as_deref(),
+        access.api_key_name.as_deref(),
+    )
+    .await
+    .map_err(|e| QueryError::new(StatusCode::BAD_REQUEST, e))
 }
 
 /// Main MCP JSON-RPC handler — async dispatch
@@ -874,14 +927,19 @@ async fn dispatch_jsonrpc_async(
                     if tool["name"].as_str() == Some("ask_wiki") {
                         let base = tool["description"].as_str().unwrap_or("");
                         tool["description"] = serde_json::json!(format!(
-                            "{} 图片访问：Wiki 页面中的图片完整地址形如 http://{h}/api/wiki/projects/<project_id>/assets/<token>/<file>。回答引用图片时，必须输出完整 markdown 图片链接 ![描述](http://{h}/api/wiki/...)，禁止省略 host/端口或写成占位符（如 <wiki-host>）。",
+                            "{} 图片访问：Wiki 页面中的图片完整地址形如 {h}/api/wiki/projects/<project_id>/assets/<token>/<file>。回答引用图片时，必须输出完整 markdown 图片链接 ![描述]({h}/api/wiki/...)，禁止省略 host/端口或写成占位符（如 <wiki-host>）。",
                             base
                         ));
                     }
                 }
             }
+            // 软件对接：动态追加启用中的软件实例工具（software__ 命名空间）
+            tools.extend(
+                crate::services::software::mcp_bridge::list_enabled_tools(&shared.state.db.pool)
+                    .await,
+            );
             McpResponse::success(req.id.clone(), serde_json::json!({ "tools": tools }))
-        },
+        }
         "tools/call" => {
             let tool_name = req
                 .params
@@ -895,7 +953,7 @@ async fn dispatch_jsonrpc_async(
                 .cloned()
                 .unwrap_or(serde_json::Value::Object(Default::default()));
 
-            match handle_tool_call(shared, tool_name, &args, host).await {
+            match handle_tool_call(shared, tool_name, &args, host, None, None).await {
                 Ok(result) => McpResponse::success(req.id.clone(), result),
                 Err(e) => McpResponse::error(req.id.clone(), -32603, e),
             }
@@ -1076,8 +1134,26 @@ async fn handle_tool_call(
     tool_name: &str,
     args: &serde_json::Value,
     host: Option<&str>,
+    // 调用方 API Key 身份（scoped 路径由 access 传入，内部 LLM 调用审计归因用）
+    api_key_id: Option<&str>,
+    api_key_name: Option<&str>,
 ) -> Result<serde_json::Value, String> {
     let pool = &shared.state.db.pool;
+
+    // 软件对接工具（software__ 命名空间）→ software 能力域分发。
+    // API Key（scoped）与 MCP token 全量模式均可达（scoped 在 dispatch_scoped 内单独分发）。
+    if tool_name.starts_with("software__") {
+        return crate::services::software::mcp_bridge::call_tool(&shared.state, tool_name, args)
+            .await;
+    }
+
+    // Link 管理工具：AI Agent 通过 /mcp 对话式配置软件对接实例（连接器发现 /
+    // OpenAPI 导入 / 实例增删改查）。API Key（scoped）与全量模式均可达。
+    if let Some(result) =
+        crate::services::software::mcp_mgmt::try_handle(&shared.state, tool_name, args).await
+    {
+        return result;
+    }
 
     match tool_name {
         "search_knowledge_base" => {
@@ -2217,7 +2293,18 @@ async fn handle_tool_call(
             let top_k = args.get("top_k").and_then(|t| t.as_u64()).unwrap_or(5) as usize;
             let model = args.get("model").and_then(|m| m.as_str());
 
-            let result = wiki_handlers::ask_inner(shared, project_id, question, top_k, model, host).await;
+            let result = wiki_handlers::ask_inner(
+                shared,
+                project_id,
+                question,
+                top_k,
+                model,
+                host,
+                // 审计归因：真实调用方 API Key（修 prior 把渠道 ID 当 api_key_id 的缺陷）
+                api_key_id,
+                api_key_name,
+            )
+            .await;
 
             match result {
                 Ok(json) => Ok(serde_json::json!({

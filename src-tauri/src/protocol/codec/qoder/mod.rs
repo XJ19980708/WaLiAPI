@@ -25,7 +25,7 @@ use super::direction::CodecDirection;
 use super::error::{DecodeError, FeatureKind, PrepareError, UnsupportedFeatures};
 use super::messages;
 use super::ports::{DecodedResponse, NonStreamDecoder, StreamDecoder};
-use super::report::ConversionContext;
+use super::report::{ConversionContext, Usage};
 use super::types::{CodecId, Protocol};
 use serde_json::{json, Value};
 
@@ -266,9 +266,10 @@ impl CodecDirection for ChatToQoder {
         &self,
         context: &ConversionContext,
     ) -> Box<dyn StreamDecoder + Send + Sync> {
+        // 下游 Chat：内层解信封后本就是 Chat chunk，直通即可（含 [DONE] 终止）。
         Box::new(QoderStreamDecoder::new(
             context.clone(),
-            chat::ChatStreamDecoder::boxed(context),
+            Box::new(ChatPassthroughStreamDecoder::default()),
         ))
     }
 }
@@ -358,9 +359,12 @@ impl CodecDirection for ResponsesToQoder {
         &self,
         context: &ConversionContext,
     ) -> Box<dyn StreamDecoder + Send + Sync> {
+        // 下游 Responses：内层 Chat SSE → Responses SSE（与 Gemini 管道一致）。
         Box::new(QoderStreamDecoder::new(
             context.clone(),
-            chat::ChatStreamDecoder::boxed(context),
+            Box::new(super::responses_codec::ChatToResponsesStreamDecoder::new(
+                context,
+            )),
         ))
     }
 }
@@ -422,6 +426,8 @@ struct QoderStreamDecoder {
     inner: Box<dyn StreamDecoder + Send + Sync>,
     pending: Vec<u8>,
     ended: bool,
+    /// 是否已向下游产出过事件（截断容错判据，与聚合器 saw_event 对齐）。
+    saw_output: bool,
 }
 
 impl QoderStreamDecoder {
@@ -430,6 +436,7 @@ impl QoderStreamDecoder {
             inner,
             pending: Vec::new(),
             ended: false,
+            saw_output: false,
         }
     }
 
@@ -457,14 +464,24 @@ impl QoderStreamDecoder {
             self.ended = true;
             return Ok(out);
         };
-        // 内层事件序列化后交给下游协议的流解码器。
-        let inner_bytes = serde_json::to_vec(&inner).map_err(|error| {
-            DecodeError::new(
-                "/",
-                format!("Qoder inner event re-serialize failed: {error}"),
-            )
-        })?;
-        out.extend(self.inner.feed(&inner_bytes)?);
+        // 网关遥测事件（`event:finish` + firstTokenDuration 等）既非信封也非
+        // chat chunk，直通会成为下游垃圾帧；没有 choices/usage/id 的一律跳过。
+        if inner.get("choices").is_none()
+            && inner.get("usage").is_none()
+            && inner.get("id").is_none()
+        {
+            return Ok(out);
+        }
+        // 内层事件必须重新组帧为 SSE 记录（`data: {json}\n\n`）再交给下游
+        // 解码器：内层解码器（ChatSseState / Responses 解码器 / Chat 直通）
+        // 的输入契约都是 SSE 记录，裸 JSON 没有终止符与 data: 前缀，会被
+        // 当作空载荷静默丢弃（回归：流式路径全部报 "no message_start"）。
+        let inner_bytes = format!("data: {inner}\n\n").into_bytes();
+        let events = self.inner.feed(&inner_bytes)?;
+        if !events.is_empty() {
+            self.saw_output = true;
+        }
+        out.extend(events);
         Ok(out)
     }
 }
@@ -502,6 +519,11 @@ impl StreamDecoder for QoderStreamDecoder {
                     return Ok(events);
                 }
             }
+            if self.saw_output {
+                // 已向下游产出过内容：尾部残片（多为遥测/截断）容忍，
+                // 交给内层解码器正常收尾（合成终止事件）。
+                return out_finish(&mut self.inner);
+            }
             return Err(DecodeError::new("/", "Qoder SSE ended mid-record"));
         }
         out_finish(&mut self.inner)
@@ -513,6 +535,99 @@ impl StreamDecoder for QoderStreamDecoder {
 
     fn saw_terminal(&self) -> bool {
         self.ended && self.inner.saw_terminal()
+    }
+}
+
+/// Qoder 内层 Chat chunk → 下游 Chat SSE 直通解码器。
+///
+/// 解信封后的内层事件本身就是 OpenAI Chat chunk，下游为 Chat 协议时无需
+/// 协议转换，重组帧直通；usage 从 chunk 提取用于记账，网关终止标记
+/// （信封 `[DONE]` / 裸 `[DONE]` / EOF 收尾）合成下游 `data: [DONE]`。
+#[derive(Default)]
+struct ChatPassthroughStreamDecoder {
+    usage: Usage,
+    saw_chunk: bool,
+    done_emitted: bool,
+}
+
+impl ChatPassthroughStreamDecoder {
+    fn emit_done(&mut self, out: &mut Vec<String>) {
+        if self.done_emitted {
+            return;
+        }
+        self.done_emitted = true;
+        out.push("data: [DONE]\n\n".to_owned());
+    }
+
+    fn merge_usage(&mut self, u: &Value) {
+        let prompt = u.get("prompt_tokens").and_then(Value::as_u64);
+        let completion = u.get("completion_tokens").and_then(Value::as_u64);
+        if let Some(p) = prompt {
+            self.usage.input_tokens = p;
+        }
+        if let Some(c) = completion {
+            self.usage.output_tokens = c;
+        }
+        if prompt.is_none()
+            && completion.is_none()
+            && self.usage.input_tokens == 0
+            && self.usage.output_tokens == 0
+        {
+            self.usage.usage_unknown = true;
+        }
+    }
+}
+
+impl StreamDecoder for ChatPassthroughStreamDecoder {
+    fn feed(&mut self, bytes: &[u8]) -> Result<Vec<String>, DecodeError> {
+        // 输入是 QoderStreamDecoder 重组帧后的单条 Chat SSE 记录。
+        let mut out = Vec::new();
+        let text = String::from_utf8(bytes.to_vec())
+            .map_err(|_| DecodeError::new("/", "Qoder inner chunk was not valid UTF-8"))?;
+        let Some(payload) = text
+            .strip_prefix("data: ")
+            .and_then(|rest| rest.strip_suffix("\n\n"))
+        else {
+            return Ok(out);
+        };
+        if payload.is_empty() {
+            return Ok(out);
+        }
+        if payload == "[DONE]" {
+            self.emit_done(&mut out);
+            return Ok(out);
+        }
+        let event: Value = serde_json::from_str(payload).map_err(|error| {
+            DecodeError::new("/", format!("Qoder inner chunk JSON was invalid: {error}"))
+        })?;
+        if let Some(u) = event.get("usage").filter(|u| u.is_object()) {
+            self.merge_usage(u);
+        }
+        if event.get("choices").is_some() {
+            self.saw_chunk = true;
+        }
+        out.push(format!("data: {payload}\n\n"));
+        Ok(out)
+    }
+
+    fn finish(&mut self) -> Result<Vec<String>, DecodeError> {
+        let mut out = Vec::new();
+        if self.saw_chunk || self.done_emitted {
+            self.emit_done(&mut out);
+            return Ok(out);
+        }
+        Err(DecodeError::new(
+            "/",
+            "Qoder upstream stream ended before any chat chunk",
+        ))
+    }
+
+    fn usage(&self) -> Option<Usage> {
+        Some(self.usage)
+    }
+
+    fn saw_terminal(&self) -> bool {
+        self.done_emitted
     }
 }
 
@@ -622,5 +737,110 @@ mod tests {
         let (encoded, context) = MessagesToQoder.encode_request(&request, "Lite").unwrap();
         assert_eq!(encoded["agent_id"], "agent_common");
         assert_eq!(context.upstream_model, "Lite");
+    }
+
+    // -----------------------------------------------------------------------
+    // 流式解码回归：QoderStreamDecoder 必须把解信封后的内层 chunk 重新组帧
+    // 为 SSE 记录（`data: {json}\n\n`）再喂给内层解码器。裸 JSON 会被内层
+    // SSE 解析当作空载荷静默丢弃，最终报 "no message_start emitted"。
+    // -----------------------------------------------------------------------
+
+    /// 真实网关信封流：chunk → finish+usage → 信封 [DONE]。
+    const GATEWAY_STREAM: &str = concat!(
+        "data:{\"headers\":{\"Content-Type\":[\"application/json\"]},\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"role\\\":\\\"assistant\\\",\\\"content\\\":\\\"Hello\\\"},\\\"index\\\":0}],\\\"id\\\":\\\"chatcmpl-1\\\",\\\"model\\\":\\\"auto\\\",\\\"object\\\":\\\"chat.completion.chunk\\\"}\",\"statusCodeValue\":200}\n\n",
+        "data:{\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{},\\\"finish_reason\\\":\\\"stop\\\",\\\"index\\\":0}],\\\"id\\\":\\\"chatcmpl-1\\\",\\\"model\\\":\\\"auto\\\",\\\"usage\\\":{\\\"prompt_tokens\\\":2,\\\"completion_tokens\\\":3,\\\"total_tokens\\\":5}}\",\"statusCodeValue\":200}\n\n",
+        "data:{\"body\":\"[DONE]\",\"statusCodeValue\":200}\n\n"
+    );
+
+    /// 前两条记录（无终止标记），用于截断容错测试。
+    fn gateway_stream_without_done() -> String {
+        GATEWAY_STREAM
+            .split_once("data:{\"body\":\"[DONE]\"")
+            .expect("stream contains done record")
+            .0
+            .to_owned()
+    }
+
+    #[test]
+    fn stream_messages_downstream_emits_full_message_lifecycle() {
+        let context = ConversionContext::new("req-1", "Lite", true);
+        let mut decoder = MESSAGES_TO_QODER.new_stream_response_decoder(&context);
+        let mut events = decoder.feed(GATEWAY_STREAM.as_bytes()).unwrap();
+        events.extend(decoder.finish().unwrap());
+        let text = events.join("");
+        assert!(text.contains("\"message_start\""), "got {text}");
+        assert!(text.contains("\"text_delta\""), "got {text}");
+        assert!(text.contains("Hello"), "got {text}");
+        assert!(text.contains("\"message_stop\""), "got {text}");
+    }
+
+    #[test]
+    fn stream_chat_downstream_passthroughs_chunks_and_done() {
+        let context = ConversionContext::new("req-1", "Lite", true);
+        let mut decoder = CHAT_TO_QODER.new_stream_response_decoder(&context);
+        let events = decoder.feed(GATEWAY_STREAM.as_bytes()).unwrap();
+        let text = events.join("");
+        assert!(text.contains("chat.completion.chunk"), "got {text}");
+        assert!(text.contains("\"choices\""), "got {text}");
+        assert!(text.contains("data: [DONE]\n\n"), "got {text}");
+        assert!(decoder.saw_terminal());
+        // EOF 后 finish 不得重复输出终止标记。
+        assert!(decoder.finish().unwrap().is_empty());
+    }
+
+    #[test]
+    fn stream_responses_downstream_completes_response_lifecycle() {
+        let context = ConversionContext::new("req-1", "Lite", true);
+        let mut decoder = RESPONSES_TO_QODER.new_stream_response_decoder(&context);
+        let mut events = decoder.feed(GATEWAY_STREAM.as_bytes()).unwrap();
+        events.extend(decoder.finish().unwrap());
+        let text = events.join("");
+        assert!(text.contains("response.created"), "got {text}");
+        assert!(text.contains("response.completed"), "got {text}");
+        assert!(text.contains("data: [DONE]"), "got {text}");
+    }
+
+    #[test]
+    fn stream_decoder_skips_gateway_telemetry_events() {
+        let context = ConversionContext::new("req-1", "Lite", true);
+        let mut decoder = CHAT_TO_QODER.new_stream_response_decoder(&context);
+        let stream = format!(
+            "{}event:finish\ndata:{{\"firstTokenDuration\":357,\"totalDuration\":900}}\n\n{}",
+            gateway_stream_without_done(),
+            "data:{\"body\":\"[DONE]\",\"statusCodeValue\":200}\n\n"
+        );
+        let events = decoder.feed(stream.as_bytes()).unwrap();
+        let text = events.join("");
+        assert!(!text.contains("firstTokenDuration"), "got {text}");
+        assert!(text.contains("data: [DONE]\n\n"), "got {text}");
+    }
+
+    #[test]
+    fn stream_decoder_tolerates_truncated_tail_after_content() {
+        let context = ConversionContext::new("req-1", "Lite", true);
+        let mut decoder = MESSAGES_TO_QODER.new_stream_response_decoder(&context);
+        let mut events = decoder
+            .feed(gateway_stream_without_done().as_bytes())
+            .unwrap();
+        // 尾部残片：网关在最后一条遥测记录未带终止符时关闭连接。
+        events.extend(
+            decoder
+                .feed(b"event:finish\ndata:{\"firstTokenDuration\":357,\"totalDur")
+                .unwrap(),
+        );
+        events.extend(decoder.finish().unwrap());
+        let text = events.join("");
+        assert!(text.contains("\"message_stop\""), "got {text}");
+        assert!(!text.contains("firstTokenDuration"), "got {text}");
+    }
+
+    #[test]
+    fn stream_decoder_fails_closed_when_terminated_without_content() {
+        // 网关只回了 [DONE] 信封、没有任何内容帧：必须报错（fail-closed），
+        // 不能把失败伪装成空回复。
+        let context = ConversionContext::new("req-1", "Lite", true);
+        let mut decoder = MESSAGES_TO_QODER.new_stream_response_decoder(&context);
+        let result = decoder.feed(b"data:{\"body\":\"[DONE]\",\"statusCodeValue\":200}\n\n");
+        assert!(result.is_err());
     }
 }

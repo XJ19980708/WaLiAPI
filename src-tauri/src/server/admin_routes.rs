@@ -768,6 +768,14 @@ async fn dispatch(shared: &SharedState, cmd: &str, args: Value) -> Result<Value,
         "get_feature_flags" => to_json(commands::settings::get_feature_flags(state)),
         "detect_local_proxies" => to_json(commands::network::detect_local_proxies().await),
         "get_server_status" => to_json(commands::server::get_server_status(state).await),
+        "mcp_online_call" => to_json(
+            commands::server::mcp_online_call_impl(
+                state.inner(),
+                arg(&args, "auth")?,
+                arg(&args, "body")?,
+            )
+            .await,
+        ),
         #[cfg(feature = "desktop-ui")]
         "restart_server" => match shared.desktop_app {
             Some(app) => to_json(commands::server::restart_server(app.clone(), state).await),
@@ -1038,6 +1046,35 @@ async fn dispatch(shared: &SharedState, cmd: &str, args: Value) -> Result<Value,
         "rescan_wiki_sources" => {
             to_json(commands::wiki::rescan_wiki_sources(state, arg(&args, "projectId")?).await)
         }
+        // ── Wiki 备份：导出 / 导入 ──
+        "export_wiki_project" => to_json(
+            commands::wiki::export_wiki_project(
+                state,
+                arg(&args, "projectId")?,
+                arg(&args, "targetDir")?,
+            )
+            .await,
+        ),
+        "import_wiki_backup" => {
+            to_json(commands::wiki::import_wiki_backup(state, arg(&args, "path")?).await)
+        }
+        "import_wiki_backup_bytes" => {
+            to_json(commands::wiki::import_wiki_backup_bytes(state, arg(&args, "base64")?).await)
+        }
+        #[cfg(feature = "desktop-ui")]
+        "pick_wiki_export_dir" => {
+            let app = desktop_app("导出目录选择")?;
+            to_json(commands::wiki::pick_wiki_export_dir(app.clone()).await)
+        }
+        #[cfg(not(feature = "desktop-ui"))]
+        "pick_wiki_export_dir" => Err("目录选择仅桌面版可用，请填写服务器路径".to_string()),
+        #[cfg(feature = "desktop-ui")]
+        "pick_wiki_import_file" => {
+            let app = desktop_app("备份文件选择")?;
+            to_json(commands::wiki::pick_wiki_import_file(app.clone()).await)
+        }
+        #[cfg(not(feature = "desktop-ui"))]
+        "pick_wiki_import_file" => Err("文件选择仅桌面版可用，请在浏览器中选择备份文件".to_string()),
 
         // ── 应用配置（容器内通常全部不可用，由前端置灰）──
         "get_app_configs" => to_json(commands::app_config::get_app_configs(state).await),
@@ -1059,6 +1096,58 @@ async fn dispatch(shared: &SharedState, cmd: &str, args: Value) -> Result<Value,
         "open_config_folder" => {
             to_json(commands::app_config::open_config_folder(arg(&args, "appName")?).await)
         }
+
+        // ── 软件对接（Link）：与桌面 invoke 语义一致，Web 面板/headless 必须可达 ──
+        "get_software_instances" => {
+            to_json(commands::software::get_software_instances(state).await)
+        }
+        "get_software_connector_catalog" => {
+            to_json(commands::software::get_software_connector_catalog().await)
+        }
+        "create_software_instance" => {
+            to_json(commands::software::create_software_instance(state, arg(&args, "input")?).await)
+        }
+        "update_software_instance" => {
+            to_json(commands::software::update_software_instance(state, arg(&args, "input")?).await)
+        }
+        "toggle_software_instance" => to_json(
+            commands::software::toggle_software_instance(
+                state,
+                arg(&args, "id")?,
+                arg(&args, "enabled")?,
+            )
+            .await,
+        ),
+        "delete_software_instance" => {
+            to_json(commands::software::delete_software_instance(state, arg(&args, "id")?).await)
+        }
+        "get_software_instance_tools" => {
+            to_json(commands::software::get_software_instance_tools(state, arg(&args, "id")?).await)
+        }
+        "get_software_tool_logs" => to_json(
+            commands::software::get_software_tool_logs(
+                state,
+                arg(&args, "instanceId")?,
+                arg(&args, "limit")?,
+            )
+            .await,
+        ),
+        "scan_installed_software" => to_json(commands::software::scan_installed_software().await),
+        "import_openapi" => to_json(
+            commands::software::import_openapi(arg(&args, "spec")?, arg(&args, "base_url")?).await,
+        ),
+        "get_clihub_catalog" => to_json(commands::software::get_clihub_catalog().await),
+        "install_clihub_cli" => {
+            to_json(commands::software::install_clihub_cli(arg(&args, "name")?).await)
+        }
+        "create_clihub_instance" => to_json(
+            commands::software::create_clihub_instance(
+                state,
+                arg(&args, "name")?,
+                arg(&args, "mcpEnabled")?,
+            )
+            .await,
+        ),
 
         _ => Err(format!("未知命令: {cmd}")),
     }

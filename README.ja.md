@@ -9,7 +9,7 @@
 **OpenAI、Claude、DeepSeek、Gemini などの上流モデルを、ひとつのローカルゲートウェイに統合。**<br>
 **ひとつのキー、ひとつのプロトコル、完全な監査ログで、Claude Code・Codex CLI・Gemini CLI・WaLiCode などの AI コーディングツールに接続。**
 
-[![Version](https://img.shields.io/badge/version-0.4.2-blue.svg)](./src-tauri/tauri.conf.json)
+[![Version](https://img.shields.io/badge/version-0.4.4-blue.svg)](./src-tauri/tauri.conf.json)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](#はじめに)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app)
@@ -382,7 +382,26 @@ WaLiAPI は**ローカル / イントラネット優先**で設計されてい�
 
 完全なリリース履歴（中国語）は[メイン README](README.md#-版本历史) を参照してください。最新リリース：
 
-### v0.4.2 (2026-10-16)
+### v0.4.4 (2026-10-18)
+
+- ✨ **Wiki プロジェクトのエクスポート / インポート（zip バックアップ）**（PR #163、@freakojc）：新規 `services/wiki/backup.rs` がページ Markdown・ソースファイル・画像アセット（トークン含む）・コアデータを zip にパッキング。エクスポート / インポートコマンドと Admin ルートを追加し、UI にエクスポートダイアログを提供
+- 🐛 **ask_wiki 全経路修正**（PR #164、@freakojc）：中国語句読点のバイトスライス panic・画像 URL のネスト解析・推論レベル監査の実際の API Key への帰属・MCP ツール説明の `http://` 二重プレフィックス・チャネルインポート / エクスポートのアイコン向きを修正
+- 🐛 **Responses→Chat 変換の省略時に max_tokens=4096 を注入しない**（PR #165、@ymsy2021）：Codex など Responses クライアントは `max_output_tokens` を送信しないが、旧変換は `max_tokens=4096` をハードコーディングし、長い回答が黙って打ち切られていた（`finish_reason=length`、予算には reasoning トークンも含まれる）。明示的に指定がある場合のみマッピングするよう修正（#162 を修正）
+- 🎨 **推論レベルドロップダウンの統一**（@fuzhengwei）：ナレッジベース設定・Wiki 新規作成ダイアログ・Wiki プロジェクト設定の 3 ヶ所の「推論レベル」ネイティブ `<select>` を共通カスタム Select コンポーネントに置き換え、UI 言語を統一
+- 🔧 バージョンを 0.4.4 に更新（package.json / Cargo.toml / tauri.conf.json / Cargo.lock）
+
+### v0.4.3 (2026-10-17)
+
+- ✨ **ソフトウェア連携（Link）**：MCP 機能ドメインを `services/software`（ソフトウェア連携）へ発展。サイドバーとナレッジベースページに Link 入口を追加（テスト機能・開発中）。コマンド層・MCP handlers・サーバー / Admin ルート・ナレッジアクセス制御も同期して対応
+- ✨ **OpenAPI / Swagger ワンクリック取り込み**：OpenAPI 3.x / Swagger 2.0（JSON/YAML）ドキュメントを貼り付けるだけで generic_http コネクタ設定に変換——各 operation が 1 つの MCP ツールになり、ツール名・パス / クエリパラメータ・リクエストボディ・リスクレベルは自動マッピング
+- ✨ **MCP による対話式インスタンス管理**：外部 AI エージェントが `/mcp` 経由でコネクタの発見・OpenAPI の取り込み・ソフトウェアインスタンスの作成 / 更新 / 削除が可能。削除には明示的な `confirm: true` が必要で、インスタンス単位のツールは承認ポリシーで制御
+- ✨ **CLI-Hub 連携**：CLI-Anything コミュニティカタログ（103+ ソフトウェア）からワンクリックでインストール + インスタンス作成。`help` / `run` の 2 ツールを持つ `ClihubConnector` を追加。hub 未インストール時は内蔵セレクトカタログへフォールバック
+- 🎨 **ソフトウェアページ刷新**：SoftwarePage を大幅に作り直し、インスタンス管理とオンラインデバッグの操作性を改善。ナレッジベースページに「利用可能ツール」テーブルとキー試用入口を追加
+- 🐛 **デスクトップ /mcp オンライン呼び出しプロキシ**：新規 `mcp_online_call` コマンドが Rust 側からローカル `/mcp` へのリクエストを代理送信し、WKWebView のループバックアドレスに対する混在コンテンツ / CORS 制限（TypeError: Load failed）を回避
+- 🐛 **Qoder ストリーミングデコード修復**：内側の Chat チャンクが裸 JSON として SSE パーサに渡され黙って破棄され、ストリーミングリクエストが「no message_start emitted」で失敗していた（非ストリーミングは影響なし）。SSE レコードとして再フレーミングし、下流プロトコルに応じて内側デコーダを選択するように修正。Responses / Chat / Messages の 3 下流でストリーミング全経路を検証済み
+
+<details>
+<summary><b>v0.4.2 (2026-10-16)</b></summary>
 
 - ✨ **Qoder Auth Provider**：`auth_provider/qoder_backend.rs`・`qoder_cosy.rs`・`qoder_login.rs` を追加。Auth アカウント体系が Qoder OAuth ログイン・トークン更新・モデル発見に対応し、`protocol/codec/qoder/` コーデックをレジストリに登録
 - ✨ **Wiki PDF 取り込みの全面修復**（PR #159、@freakojc）：`services/wiki/ingest.rs` を書き直し、OCR レンダリング強化。API Key ごとにナレッジベース / Wiki へのアクセス許可を個別設定可能に、RAG・Wiki Q&A の推論温度を個別設定可能に、取り込み進捗をモジュールレベル状態に変更
@@ -391,6 +410,8 @@ WaLiAPI は**ローカル / イントラネット優先**で設計されてい�
 - 🐛 **旧 WebKit 向けグラデーション互換修復（ADR 0002）**：`bg-gradient-to-*` が出力する `in oklab` 補間構文を旧 WKWebView が黙って破棄し、グラデーション背景が消失（例：ルートマップカードの WaLiAPI アイコンが空白化）。`App.css` で一括修復
 - 📝 **README 多言語化**：「30 秒でわかる WaLiAPI」Mermaid 図、英語版・日本語版と言語切替を追加
 - 🔧 **バージョンを 0.4.2 に更新**（package.json / Cargo.toml / tauri.conf.json / Cargo.lock）
+
+</details>
 
 ---
 

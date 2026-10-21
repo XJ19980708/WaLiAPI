@@ -2,6 +2,7 @@ use super::handlers::*;
 use crate::AppState;
 use axum::{
     extract::DefaultBodyLimit,
+    http::{header, HeaderValue, Method},
     middleware,
     routing::{get, post},
     Router,
@@ -84,13 +85,24 @@ fn build_router(state: Arc<AppState>, shared: SharedState) -> Router {
             shared.clone(),
             super::admin::require_admin,
         ));
-    let mcp_router =
-        registry
-            .merge_routes_for(&["mcp"], state.clone())
-            .layer(middleware::from_fn_with_state(
-                shared.clone(),
-                super::admin::require_mcp,
-            ));
+    let mcp_router = registry
+        .merge_routes_for(&["mcp"], state.clone())
+        .layer(middleware::from_fn_with_state(
+            shared.clone(),
+            super::admin::require_mcp,
+        ))
+        // 允许桌面 webview（tauri:// 协议）在线调试 /mcp：鉴权依赖 Authorization
+        // header 而非 Cookie，跨域页面拿不到凭据会被 401 拒绝，风险可控。
+        .layer(
+            CorsLayer::new()
+                .allow_origin([
+                    HeaderValue::from_static("tauri://localhost"),
+                    HeaderValue::from_static("http://tauri.localhost"),
+                    HeaderValue::from_static("https://tauri.localhost"),
+                ])
+                .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+                .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE, header::ACCEPT]),
+        );
 
     // Web 管理面板（/admin/api/*，自带会话鉴权 + CSRF 防护）
     let admin = super::admin_routes::router(shared.clone());
@@ -205,6 +217,7 @@ mod tests {
             events: crate::server::event_bridge::EventSink::headless(event_tx),
             settings: crate::settings_store::SettingsStore::file(data_dir.join("settings.json")),
             data_dir,
+            app_handle: Arc::new(tokio::sync::RwLock::new(None)),
         })
     }
 
@@ -805,6 +818,39 @@ mod tests {
         );
         let res = app.clone().oneshot(req).await.unwrap();
         assert_eq!(res.status(), StatusCode::OK);
+        assert!(res.headers().get("access-control-allow-origin").is_none());
+
+        // /mcp：仅允许桌面 webview origin 预检（UI 在线调试用），其它 origin 无 CORS 头
+        let mcp_preflight = |origin: &str| {
+            Request::builder()
+                .method("OPTIONS")
+                .uri("/mcp")
+                .header("origin", origin)
+                .header("access-control-request-method", "POST")
+                .header(
+                    "access-control-request-headers",
+                    "authorization,content-type",
+                )
+                .body(Body::empty())
+                .unwrap()
+        };
+        let res = app
+            .clone()
+            .oneshot(mcp_preflight("tauri://localhost"))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(
+            res.headers()
+                .get("access-control-allow-origin")
+                .and_then(|v| v.to_str().ok()),
+            Some("tauri://localhost")
+        );
+        let res = app
+            .clone()
+            .oneshot(mcp_preflight("https://evil.example"))
+            .await
+            .unwrap();
         assert!(res.headers().get("access-control-allow-origin").is_none());
     }
 

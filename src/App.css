@@ -396,3 +396,23 @@ textarea:focus {
     box-shadow: 0 8px 32px rgba(47, 111, 237, 0.28);
   }
 }
+
+/* 细滚动条：代码块 / 日志等内嵌滚动区域 */
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100, 116, 139, 0.35) transparent;
+}
+.scroll-thin::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.3);
+  border-radius: 8px;
+}
+.scroll-thin::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.5);
+}
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}

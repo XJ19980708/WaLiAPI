@@ -9,7 +9,7 @@
 **Unify OpenAI, Claude, DeepSeek, Gemini and more behind one local gateway.**<br>
 **One key, one protocol, one complete audit log — for Claude Code, Codex CLI, Gemini CLI, WaLiCode and any AI coding tool.**
 
-[![Version](https://img.shields.io/badge/version-0.4.2-blue.svg)](./src-tauri/tauri.conf.json)
+[![Version](https://img.shields.io/badge/version-0.4.4-blue.svg)](./src-tauri/tauri.conf.json)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](#getting-started)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app)
@@ -420,7 +420,26 @@ WaLiAPI is designed **local / intranet first**. Read this section before deployi
 
 The full release history (in Chinese) is maintained in the [main README](README.md#-版本历史). Latest release:
 
-### v0.4.2 (2026-10-16)
+### v0.4.4 (2026-10-18)
+
+- ✨ **Wiki project export / import (zip backup)** (PR #163, @freakojc): new `services/wiki/backup.rs` packs page markdown, source files, image assets (with tokens) and core data into a zip archive; new export / import commands and admin routes, plus an export dialog in the UI
+- 🐛 **ask_wiki end-to-end fixes** (PR #164, @freakojc): CJK punctuation byte-slicing panic, nested image URLs, reasoning-effort audit attribution to the real API key, duplicated `http://` prefix in MCP tool descriptions, icon direction on channel import/export
+- 🐛 **Responses→Chat conversion no longer injects max_tokens=4096 when absent** (PR #165, @ymsy2021): Responses clients such as Codex never send `max_output_tokens`; the old mapping hard-coded `max_tokens=4096`, silently truncating long answers (`finish_reason=length`, with the budget shared with reasoning tokens). The field is now mapped only when explicitly present (fixes #162)
+- 🎨 **Unified reasoning-effort dropdown** (@fuzhengwei): the native `<select>` used for "reasoning effort" in KB settings, the new-Wiki dialog and Wiki project settings is replaced by the shared custom Select component for a consistent UI
+- 🔧 Version bumped to 0.4.4 (package.json / Cargo.toml / tauri.conf.json / Cargo.lock)
+
+### v0.4.3 (2026-10-17)
+
+- ✨ **Software Integration (Link)**: the MCP capability domain evolves into `services/software` (software integration), with a new Link entry in the sidebar and Knowledge Base page (experimental); command layer, MCP handlers, server/admin routes and knowledge access control adapted accordingly
+- ✨ **OpenAPI / Swagger one-click import**: paste an OpenAPI 3.x / Swagger 2.0 (JSON/YAML) document to generate a generic_http connector config — each operation becomes an MCP tool, with tool names, path/query parameters, request bodies and risk levels derived automatically
+- ✨ **Conversational instance management over MCP**: external AI agents can discover connectors, import OpenAPI and create / update / delete software instances via `/mcp`; deletions require explicit `confirm: true` and instance-level tools are gated by the approval policy
+- ✨ **CLI-Hub integration**: one-click install + instance creation from the CLI-Anything community catalog (103+ tools); new `ClihubConnector` with `help` / `run` tools; falls back to a built-in curated catalog when the hub is not installed
+- 🎨 **Software page overhaul**: SoftwarePage reworked for instance management and online debugging; Knowledge Base page gains an "available tools" table and in-page key trial calls
+- 🐛 **Desktop /mcp online-call proxy**: new `mcp_online_call` command proxies requests to the local `/mcp` from the Rust side, working around WKWebView mixed-content / CORS restrictions on loopback URLs
+- 🐛 **Qoder streaming decode fix**: inner Chat chunks were fed to the SSE parser as bare JSON and silently dropped, making streaming requests fail with "no message_start emitted" (non-streaming was unaffected); chunks are now re-framed as SSE records and the inner decoder is selected per downstream protocol, with 6 new regression tests covering Responses / Chat / Messages streaming
+
+<details>
+<summary><b>v0.4.2 (2026-10-16)</b></summary>
 
 - ✨ **Qoder Auth Provider**: new `auth_provider/qoder_backend.rs`, `qoder_cosy.rs` and `qoder_login.rs`; the Auth account system now supports Qoder OAuth sign-in, token refresh and model discovery, with a new `protocol/codec/qoder/` codec registered in the codec registry
 - ✨ **Wiki PDF ingestion fixed end-to-end** (PR #159, @freakojc): rewritten `services/wiki/ingest.rs`, enhanced OCR rendering; API Keys can now be granted fine-grained knowledge-base / Wiki access; per-feature reasoning temperature for RAG and Wiki Q&A; modular ingest progress state
@@ -429,6 +448,8 @@ The full release history (in Chinese) is maintained in the [main README](README.
 - 🐛 **Old-WebKit gradient compatibility fix (ADR 0002)**: `bg-gradient-to-*` emitted `in oklab` interpolation syntax that old WKWebView silently drops, blanking gradient backgrounds (e.g. the WaLiAPI gateway icon on the Route Map card); fixed once in `App.css` for the whole codebase
 - 📝 **Multilingual README**: new "WaLiAPI in 30 Seconds" Mermaid diagram, English and Japanese versions with a language switcher
 - 🔧 **Version bump to 0.4.2** (package.json / Cargo.toml / tauri.conf.json / Cargo.lock)
+
+</details>
 
 ---
 

@@ -1,8 +1,9 @@
 import { KnowledgeConnectionPanel } from "../components/KnowledgeConnectionPanel";
 import { Select } from "../components/Select";
-import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { Fragment, useEffect, useState, useCallback, useRef, useMemo, type ReactNode } from "react";
 import { Link as RouterLink, useLocation } from "react-router-dom";
 import { onFileDrop, isTauriRuntime } from "../lib/runtime";
+import { pickFileAsBase64 } from "../lib/web";
 import {
   KnowledgeBase,
   KbDocument,
@@ -16,6 +17,7 @@ import {
   ConversationMessage,
   kbApi,
   channelApi,
+  apiKeyApi,
   settingsApi,
   serviceApi,
   serverApi,
@@ -26,9 +28,11 @@ import {
   type WikiSearchResult,
   type WikiGraphData,
   type WikiTag,
+  type WikiExportResult,
+  type WikiImportResult,
   type ServiceStatus,
 } from "../lib/api";
-import type { Channel } from "../types";
+import type { Channel, ApiKey } from "../types";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
@@ -77,11 +81,17 @@ import {
   AlertTriangle,
   Save,
   Inbox,
+Play,
+  KeyRound,
+  Download,
+  FileArchive,
+  FolderSearch,
 } from "lucide-react";
 
 import { PromptTemplatesSection } from "../components/PromptTemplatesSection";
+import { SoftwareSection } from "./SoftwarePage";
 
-type ServiceTab = "knowledge" | "wiki" | "mcp" | "skills" | "prompts";
+type ServiceTab = "knowledge" | "wiki" | "mcp" | "software" | "skills" | "prompts";
 type KbTab = "documents" | "sources" | "search" | "ask" | "settings" | "index" | "mcp";
 
 // ── Wiki 摄入进度（模块级内存状态）────────────────────────────────
@@ -132,7 +142,7 @@ function ConfirmDialog({ message, confirmLabel = "删除", onCancel, onConfirm }
 
 export function KnowledgeBasePage() {
   const location = useLocation();
-  const initialTab: ServiceTab = location.pathname.includes("/mcp") ? "mcp" : location.pathname.includes("/skills") ? "skills" : location.pathname.includes("/prompts") ? "prompts" : location.pathname.includes("/wiki") ? "wiki" : "knowledge";
+  const initialTab: ServiceTab = location.pathname.includes("/mcp") ? "mcp" : location.pathname.includes("/software") ? "software" : location.pathname.includes("/skills") ? "skills" : location.pathname.includes("/prompts") ? "prompts" : location.pathname.includes("/wiki") ? "wiki" : "knowledge";
   const [serviceTab, setServiceTab] = useState<ServiceTab>(initialTab);
 
   // 实时测量 page-header 高度 → CSS 变量 --wali-page-header-h。
@@ -154,6 +164,7 @@ export function KnowledgeBasePage() {
   const serviceTabs: { key: ServiceTab; label: string; icon: typeof BookOpen }[] = [
     { key: "knowledge", label: "RAG", icon: BookOpen },
     { key: "wiki", label: "Wiki", icon: Network },
+    { key: "software", label: "Link", icon: Link },
     { key: "mcp", label: "MCP", icon: Terminal },
     { key: "skills", label: "Skills", icon: Puzzle },
     { key: "prompts", label: "Prompt 模板", icon: FileText },
@@ -162,31 +173,40 @@ export function KnowledgeBasePage() {
   return (
     <div className="page-shell space-y-6">
       {/* Page Header */}
-      <div className="page-header sticky top-0 z-30 -mx-7 -mt-7 mb-2 bg-white/90 px-7 py-5 backdrop-blur-md border-b border-slate-100" ref={headerRef}>
-        <div>
+      <div className="page-header sticky top-0 z-30 flex-wrap -mx-7 -mt-7 mb-2 bg-white/90 px-7 py-5 backdrop-blur-md border-b border-slate-100" ref={headerRef}>
+        <div className="min-w-0">
           <h1 className="page-title">服务</h1>
-          <p className="page-subtitle">本地 RAG 知识库 · Wiki 知识图谱 · MCP · Prompt 模板 · 支持 AI Agent 对接</p>
+          <p className="page-subtitle">本地 RAG 知识库 · Wiki 知识图谱 · Link · MCP · Prompt 模板 · 支持 AI Agent 对接</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
           {serviceTabs.map(({ key, label, icon: Icon }) => (
-            <button
-              key={key}
-              onClick={() => setServiceTab(key)}
-              className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition-all ${
-                serviceTab === key
-                  ? "border border-blue-100 bg-white text-slate-900 shadow-[0_8px_18px_rgba(15,23,42,0.05)]"
-                  : "text-slate-500 hover:bg-white/70 hover:text-slate-900"
-              }`}
-            >
-              <Icon size={16} />
-              {label}
-            </button>
+            <Fragment key={key}>
+              <button
+                onClick={() => setServiceTab(key)}
+                title={key === "software" ? "测试功能 · 开发迭代中" : undefined}
+                className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl px-3 py-2 text-sm font-medium transition-all ${
+                  serviceTab === key
+                    ? "border border-blue-100 bg-white text-slate-900 shadow-[0_8px_18px_rgba(15,23,42,0.05)]"
+                    : "text-slate-500 hover:bg-white/70 hover:text-slate-900"
+                }`}
+              >
+                <Icon size={16} />
+                {label}
+                {key === "software" && (
+                  <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-amber-600">
+                    Beta
+                  </span>
+                )}
+              </button>
+              {/* Software 属测试功能：分割线与其后「对外能力」类入口（MCP / Skills / Prompt 模板）分组 */}
+              {key === "software" && <div aria-hidden className="mx-1 h-6 w-px shrink-0 bg-slate-300" />}
+            </Fragment>
           ))}
         </div>
       </div>
 
       <div>
-        {serviceTab === "knowledge" ? <KnowledgeBaseSection /> : serviceTab === "wiki" ? <WikiSection /> : serviceTab === "mcp" ? <McpSection /> : serviceTab === "prompts" ? <PromptTemplatesSection /> : <SkillsSection />}
+        {serviceTab === "knowledge" ? <KnowledgeBaseSection /> : serviceTab === "wiki" ? <WikiSection /> : serviceTab === "mcp" ? <McpSection /> : serviceTab === "software" ? <SoftwareSection /> : serviceTab === "prompts" ? <PromptTemplatesSection /> : <SkillsSection />}
       </div>
     </div>
   );
@@ -210,6 +230,64 @@ const TOOL_ICONS: Record<string, typeof Terminal> = {
   build_index: Sparkles,
   import_source: GitBranch,
 };
+
+/** 轻量 JSON 语法高亮（零依赖）：key 蓝、string 绿、number 琥珀、bool/null 玫红、标点灰 */
+const JSON_TOKEN_RE =
+  /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g;
+
+function HighlightedJson({ text }: { text: string }) {
+  const nodes: ReactNode[] = [];
+  const re = new RegExp(JSON_TOKEN_RE.source, "g");
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) {
+      nodes.push(
+        <span key={`p${last}`} className="text-slate-500">
+          {text.slice(last, m.index)}
+        </span>,
+      );
+    }
+    if (m[1] !== undefined) {
+      if (m[2] !== undefined) {
+        nodes.push(
+          <span key={`k${m.index}`}>
+            <span className="text-sky-700">{m[1]}</span>
+            <span className="text-slate-400">{m[2]}</span>
+          </span>,
+        );
+      } else {
+        nodes.push(
+          <span key={`s${m.index}`} className="text-emerald-700">
+            {m[1]}
+          </span>,
+        );
+      }
+    } else if (m[3] !== undefined) {
+      nodes.push(
+        <span key={`b${m.index}`} className="font-medium text-rose-600">
+          {m[3]}
+        </span>,
+      );
+    } else if (m[4] !== undefined) {
+      nodes.push(
+        <span key={`n${m.index}`} className="text-amber-600">
+          {m[4]}
+        </span>,
+      );
+    }
+    last = re.lastIndex;
+    if (m[0] === "") re.lastIndex++;
+  }
+  if (last < text.length) {
+    nodes.push(
+      <span key={`p${last}`} className="text-slate-500">
+        {text.slice(last)}
+      </span>,
+    );
+  }
+  return <>{nodes}</>;
+}
 
 function McpSection() {
   const [services, setServices] = useState<ServiceStatus[]>([]);
@@ -242,6 +320,121 @@ function McpSection() {
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  // ── 在线调用示例（左示例 / 右真实调用）──
+  const [mcpAuth, setMcpAuth] = useState(() => localStorage.getItem("waliapi-mcp-auth") ?? "");
+  // 密钥下拉选择：值为 API Key id 或 "manual"（手动输入 MCP Token 等）
+  const [mcpApiKeys, setMcpApiKeys] = useState<ApiKey[]>([]);
+  const [authChoice, setAuthChoice] = useState<string>(() => localStorage.getItem("waliapi-mcp-auth-choice") ?? "manual");
+  const [authLoading, setAuthLoading] = useState(false);
+  useEffect(() => {
+    apiKeyApi.getAll().then((keys) => {
+      setMcpApiKeys(keys.filter((k) => k.status === 1));
+    }).catch(() => {});
+  }, []);
+  // 选择已保存的 API Key 时自动取完整密钥填入；手动输入则保留现有值
+  useEffect(() => {
+    if (!authChoice || authChoice === "manual") return;
+    let cancelled = false;
+    setAuthLoading(true);
+    apiKeyApi.getFull(authChoice)
+      .then((full) => {
+        if (cancelled) return;
+        setMcpAuth(full);
+        localStorage.setItem("waliapi-mcp-auth", full);
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setAuthLoading(false); });
+    return () => { cancelled = true; };
+  }, [authChoice]);
+
+  const authOptions = [
+    ...mcpApiKeys.map((k) => ({
+      value: k.id,
+      label: `${k.name}（…${(k.key || "").slice(-4)}）`,
+    })),
+    { value: "manual", label: "手动输入（MCP Token 等）" },
+  ];
+  const handleAuthChoice = (v: string) => {
+    setAuthChoice(v);
+    localStorage.setItem("waliapi-mcp-auth-choice", v);
+  };
+  const [calling, setCalling] = useState(false);
+  // 最近一次响应（无需调用记录，只保留最后一次）
+  const [lastResp, setLastResp] = useState<{ ok: boolean; status: number | "err"; ms: number; time: string; response: string } | null>(null);
+
+  const curlExample = `curl -X POST ${mcpEndpoint} \\
+  -H "Authorization: Bearer $WALIAPI_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/list",
+    "params": {}
+  }'`;
+
+  const runExample = async () => {
+    const started = performance.now();
+    const time = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+    setCalling(true);
+    const rpcBody = JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method: "tools/list", params: {} });
+    let resp: { ok: boolean; status: number | "err"; ms: number; time: string; response: string };
+    try {
+      let status: number;
+      let text: string;
+      if (isTauriRuntime()) {
+        // 桌面端：Rust 侧代理请求，绕开 WKWebView 对回环地址的混合内容/CORS 限制
+        const r = await serverApi.mcpOnlineCall(mcpAuth, rpcBody);
+        status = r.status;
+        text = r.body;
+      } else {
+        // 非 Tauri 环境（浏览器同源/常规 fetch）：直接请求
+        // WebKit 对安全上下文里的 127.0.0.1 字面 IP 不豁免混合内容，fetch 用 localhost
+        const fetchEndpoint = mcpEndpoint.replace("127.0.0.1", "localhost");
+        const res = await fetch(fetchEndpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json, text/event-stream",
+            Authorization: `Bearer ${mcpAuth}`,
+          },
+          body: rpcBody,
+        });
+        status = res.status;
+        text = await res.text();
+      }
+      const ms = Math.round(performance.now() - started);
+      // SSE 响应折叠出 data: 行；纯 JSON 直接美化
+      if (text.startsWith("data:")) {
+        text = text
+          .split("\n")
+          .filter((l) => l.startsWith("data:"))
+          .map((l) => l.slice(5).trim())
+          .join("\n");
+      }
+      let ok = status >= 200 && status < 300;
+      try {
+        const parsed = JSON.parse(text);
+        ok = ok && !parsed.error;
+        text = JSON.stringify(parsed, null, 2);
+      } catch {
+        /* 非 JSON 保留原文 */
+      }
+      resp = { ok, status, ms, time, response: text };
+    } catch (e) {
+      const ms = Math.round(performance.now() - started);
+      resp = {
+        ok: false,
+        status: "err",
+        ms,
+        time,
+        response: `请求失败：${String(e)}\n\n可能原因：服务未启动或端口不正确；也可能是桌面端仍在运行旧版本（需重启使在线调用生效）。`,
+      };
+    } finally {
+      setCalling(false);
+    }
+    setLastResp(resp);
   };
 
   if (loading) {
@@ -327,49 +520,147 @@ function McpSection() {
         </div>
       </div>
 
-      {/* Available Tools */}
-      <div className="surface data-card rounded-2xl">
-        <div className="mb-4 flex items-center gap-2">
-          <Terminal size={18} className="text-slate-700" />
-          <h3 className="text-sm font-semibold text-slate-900">可用工具 ({tools.length})</h3>
-        </div>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {tools.map((tool) => {
-            const icon = TOOL_ICONS[tool.name] || Terminal;
-            const Icon = icon;
-            return (
-              <div key={tool.name} className="group flex items-start gap-3 rounded-xl border border-slate-100 bg-gradient-to-br from-white to-slate-50 px-3 py-2.5 transition-all hover:border-slate-200 hover:shadow-sm">
-                <div className="mt-0.5 flex-shrink-0 rounded-lg bg-slate-100 p-1.5 text-slate-600 transition-colors group-hover:bg-slate-200">
-                  <Icon size={14} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-semibold text-slate-800">{tool.label}</span>
-                    <code className="truncate text-[10px] font-normal text-slate-400">{tool.name}</code>
-                  </div>
-                  <p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">{tool.desc}</p>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Usage Example */}
-      <div className="surface data-card rounded-2xl">
+      {/* 调用示例：左 curl 示例 / 右在线调用 + 调用记录 */}
+      <div className="surface data-card rounded-2xl lg:col-span-2">
         <div className="mb-4 flex items-center gap-2">
           <Terminal size={18} className="text-slate-700" />
           <h3 className="text-sm font-semibold text-slate-900">调用示例</h3>
         </div>
-        <pre className="overflow-x-auto rounded-xl bg-slate-50 border border-slate-200 p-4 text-xs"><code className="text-slate-800">{`curl -X POST ${mcpEndpoint} \\
-  -H "Authorization: Bearer $WALIAPI_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "tools/list",
-    "params": {}
-  }'`}</code></pre>
+        <div className="grid gap-5 lg:grid-cols-2">
+          {/* 左：curl 示例 */}
+          <div>
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="text-xs font-medium text-slate-500">curl 示例（tools/list）</span>
+              <button
+                onClick={() => handleCopy(curlExample)}
+                className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-600"
+              >
+                {copied ? <CheckCircle2 size={12} className="text-emerald-500" /> : <Copy size={12} />}
+                复制
+              </button>
+            </div>
+            <pre className="scroll-thin max-h-72 overflow-auto rounded-xl border border-slate-200 bg-slate-50 p-3.5 font-mono text-[11px] leading-relaxed text-slate-800">
+              <code>{curlExample}</code>
+            </pre>
+            <p className="mt-2 text-[11px] leading-relaxed text-slate-400">
+              RAG 查询用「密钥」页签发的 API Key；管理工具与 Wiki 用 MCP Token。在右侧下拉选择密钥即可在本页直接试调。
+            </p>
+          </div>
+
+          {/* 右：在线调用 */}
+          <div className="flex flex-col">
+            <span className="mb-1.5 text-xs font-medium text-slate-500">在线调用（真实请求 /mcp）</span>
+            <div className="flex items-center gap-2">
+              <Select
+                size="md"
+                className="flex-1"
+                ariaLabel="选择密钥"
+                placeholder="选择 API Key"
+                value={authChoice}
+                onChange={handleAuthChoice}
+                options={authOptions}
+              />
+              <button
+                className="action-primary flex shrink-0 items-center gap-1.5 text-xs disabled:opacity-40"
+                disabled={calling || authLoading || !mcpAuth.trim()}
+                onClick={() => void runExample()}
+              >
+                {calling ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
+                {calling ? "调用中..." : "调用 tools/list"}
+              </button>
+            </div>
+            {authChoice === "manual" && (
+              <div className="relative mt-2">
+                <KeyRound size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="password"
+                  autoComplete="off"
+                  placeholder="API Key 或 MCP Token（Bearer）"
+                  className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-8 pr-2 text-xs text-slate-800 outline-none focus:border-blue-400"
+                  value={mcpAuth}
+                  onChange={(e) => {
+                    setMcpAuth(e.target.value);
+                    localStorage.setItem("waliapi-mcp-auth", e.target.value);
+                  }}
+                />
+              </div>
+            )}
+
+            {/* 最近一次响应 */}
+            <div className="mt-3">
+              <div className="mb-1.5 flex items-center gap-2 text-[11px] text-slate-400">
+                最近一次响应
+                {lastResp && (
+                  <span className="flex items-center gap-1">
+                    <span className={`h-1.5 w-1.5 rounded-full ${lastResp.ok ? "bg-emerald-500" : "bg-rose-500"}`} />
+                    <span className={lastResp.ok ? "text-emerald-600" : "text-rose-500"}>
+                      {lastResp.status === "err" ? "网络错误" : `HTTP ${lastResp.status}`}
+                    </span>
+                    <span>· {lastResp.ms}ms · {lastResp.time}</span>
+                  </span>
+                )}
+              </div>
+              {lastResp ? (
+                <pre className="scroll-thin max-h-72 overflow-auto rounded-xl border border-slate-200 bg-slate-50 p-3.5 font-mono text-[11px] leading-relaxed">
+                  <code>
+                    {lastResp.response.startsWith("{") || lastResp.response.startsWith("[") ? (
+                      <HighlightedJson text={lastResp.response} />
+                    ) : (
+                      lastResp.response
+                    )}
+                  </code>
+                </pre>
+              ) : (
+                <div className="flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-8 text-center">
+                  <Play size={16} className="text-slate-300" />
+                  <span className="text-[11px] text-slate-400">
+                    选择密钥后点击「调用 tools/list」，这里会显示真实响应
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 可用工具（表格列表） */}
+      <div className="surface data-card rounded-2xl lg:col-span-2">
+        <div className="mb-4 flex items-center gap-2">
+          <Terminal size={18} className="text-slate-700" />
+          <h3 className="text-sm font-semibold text-slate-900">可用工具 ({tools.length})</h3>
+        </div>
+        <div className="overflow-x-auto rounded-xl border border-slate-100">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-slate-50 text-slate-500">
+              <tr>
+                <th className="px-3 py-2 font-medium">工具</th>
+                <th className="px-3 py-2 font-medium">MCP 名称</th>
+                <th className="px-3 py-2 font-medium">说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tools.map((tool) => {
+                const Icon = TOOL_ICONS[tool.name] || Terminal;
+                return (
+                  <tr key={tool.name} className="border-t border-slate-100 transition-colors hover:bg-slate-50">
+                    <td className="whitespace-nowrap px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-lg bg-slate-100 p-1.5 text-slate-600">
+                          <Icon size={13} />
+                        </span>
+                        <span className="font-semibold text-slate-800">{tool.label}</span>
+                      </div>
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2">
+                      <code className="font-mono text-[11px] text-slate-400">{tool.name}</code>
+                    </td>
+                    <td className="px-3 py-2 leading-relaxed text-slate-500">{tool.desc}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
@@ -2908,18 +3199,20 @@ function SettingsTab({ kb, onUpdated }: { kb: KnowledgeBase; onUpdated: (kb: Kno
         <div className="space-y-4">
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">推理档位（思考级别）</label>
-            <select
+            <Select
               value={reasoningEffort}
-              onChange={(e) => setReasoningEffort(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-            >
-              <option value="">跟随默认（不覆盖模型默认）</option>
-              <option value="default">default（模型默认）</option>
-              <option value="none">none（关闭推理）</option>
-              <option value="low">low</option>
-              <option value="medium">medium</option>
-              <option value="high">high</option>
-            </select>
+              onChange={(v) => setReasoningEffort(v)}
+              size="sm"
+              ariaLabel="推理档位（思考级别）"
+              options={[
+                { value: "", label: "跟随默认（不覆盖模型默认）" },
+                { value: "default", label: "default（模型默认）" },
+                { value: "none", label: "none（关闭推理）" },
+                { value: "low", label: "low" },
+                { value: "medium", label: "medium" },
+                { value: "high", label: "high" },
+              ]}
+            />
             <p className="mt-1 text-xs text-slate-400">问答未显式传档位时使用该值；仅对支持 reasoning_effort 的上游有效。</p>
           </div>
           <div>
@@ -3556,6 +3849,8 @@ function WikiSection() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
+  const [showExport, setShowExport] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [wikiDeleteTarget, setWikiDeleteTarget] = useState<{ message: string; run: () => void } | null>(null);
   const [wikiTab, setWikiTab] = useState<"overview" | "pages" | "sources" | "search" | "graph" | "settings">("overview");
@@ -3650,14 +3945,26 @@ function WikiSection() {
         <Network className="h-12 w-12 text-slate-300" />
         <p className="text-sm text-slate-500">还没有 Wiki 项目</p>
         <p className="text-xs text-slate-400">LLM 增量 RAG：摄入文档 → 生成结构化页面 → 知识图谱</p>
-        <button onClick={() => setShowCreate(true)} className="action-primary mt-3">
-          <Plus size={16} />
-          新建 Wiki 项目
-        </button>
+        <div className="mt-3 flex items-center gap-2">
+          <button onClick={() => setShowImport(true)} className="action-secondary">
+            <Download size={16} />
+            导入备份
+          </button>
+          <button onClick={() => setShowCreate(true)} className="action-primary">
+            <Plus size={16} />
+            新建 Wiki 项目
+          </button>
+        </div>
         {showCreate && (
           <CreateWikiProjectModal
             onClose={() => setShowCreate(false)}
             onCreated={async () => { setShowCreate(false); await fetchProjects(); }}
+          />
+        )}
+        {showImport && (
+          <WikiImportDialog
+            onClose={() => setShowImport(false)}
+            onImported={async () => { setShowImport(false); await fetchProjects(); }}
           />
         )}
       </div>
@@ -3666,7 +3973,23 @@ function WikiSection() {
 
   return (
     <>
-      <div className="flex justify-end mb-4">
+      <div className="flex justify-end gap-2 mb-4">
+        <button
+          onClick={() => setShowExport(true)}
+          className="action-secondary"
+          title="把项目导出为 zip 备份（含页面、源文件、图片与 token）"
+        >
+          <Upload size={16} />
+          导出
+        </button>
+        <button
+          onClick={() => setShowImport(true)}
+          className="action-secondary"
+          title="从 zip 备份导入并恢复项目"
+        >
+          <Download size={16} />
+          导入
+        </button>
         <button onClick={() => setShowCreate(true)} className="action-primary">
           <Plus size={16} />
           新建 Wiki 项目
@@ -3732,6 +4055,15 @@ function WikiSection() {
           onCreated={async () => { setShowCreate(false); await fetchProjects(); }}
         />
       )}
+      {showExport && (
+        <WikiExportDialog projects={projects} onClose={() => setShowExport(false)} />
+      )}
+      {showImport && (
+        <WikiImportDialog
+          onClose={() => setShowImport(false)}
+          onImported={async () => { setShowImport(false); await fetchProjects(); }}
+        />
+      )}
 
       {wikiDeleteTarget && (
         <ConfirmDialog
@@ -3741,6 +4073,249 @@ function WikiSection() {
         />
       )}
     </>
+  );
+}
+
+// ─── Wiki 项目备份：大小格式化 ─────────────────────────────────────
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(2)} MB`;
+}
+
+// ─── Wiki 导出弹窗：选项目 + 本地目录（可打开本地路径选择）→ 打 zip ──
+function WikiExportDialog({ projects, onClose }: { projects: WikiProject[]; onClose: () => void }) {
+  const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
+  const [targetDir, setTargetDir] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<WikiExportResult | null>(null);
+
+  // 弹窗期间锁定页面滚动（关闭时恢复）
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = ""; };
+  }, []);
+
+  const handlePickDir = async () => {
+    setError(null);
+    try {
+      const dir = await wikiApi.pickExportDir();
+      if (dir) setTargetDir(dir);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const handleExport = async () => {
+    if (!projectId) { setError("请选择要导出的 Wiki 项目"); return; }
+    const dir = targetDir.trim();
+    if (!dir) { setError("请输入或选择导出目录"); return; }
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const res = await wikiApi.exportProject(projectId, dir);
+      setDone(res);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="relative w-full max-w-lg rounded-3xl bg-white p-7 shadow-2xl max-h-[70vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <button onClick={onClose} className="absolute right-5 top-5 rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+          <XCircle className="h-5 w-5" />
+        </button>
+        <div className="flex items-center gap-2">
+          <div className="rounded-2xl border border-violet-100 bg-violet-50 p-2.5">
+            <Upload className="h-5 w-5 text-violet-600" />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">导出 Wiki 备份</h2>
+            <p className="text-xs text-slate-500">打包页面 MD、源文件、图片资产（含 token）与核心数据为 zip</p>
+          </div>
+        </div>
+        <div className="mt-5 space-y-4">
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-slate-700">选择项目 *</label>
+            <select
+              value={projectId}
+              onChange={e => { setProjectId(e.target.value); setDone(null); }}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm"
+            >
+              {projects.map(p => (
+                <option key={p.id} value={p.id}>{p.name}（{p.page_count} 页面 · {p.source_count} 源）</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-slate-700">导出目录 *</label>
+            <p className="mb-1.5 text-[11px] text-slate-400">
+              {isTauriRuntime() ? "备份以 wiki-backup-<项目名>-<时间戳>.zip 保存到该目录" : "填写服务端存放备份的目录路径"}
+            </p>
+            <div className="flex gap-2">
+              <input
+                value={targetDir}
+                onChange={e => setTargetDir(e.target.value)}
+                placeholder={isTauriRuntime() ? "例如 D:\\Backups\\wiki 或 /home/user/backups" : "例如 /data/waliapi/backups"}
+                className="min-w-0 flex-1 rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm"
+              />
+              {isTauriRuntime() && (
+                <button onClick={handlePickDir} className="action-secondary shrink-0" title="打开本地路径选择目录">
+                  <FolderSearch size={16} />
+                  打开本地路径
+                </button>
+              )}
+            </div>
+          </div>
+
+          {error && (
+            <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-xs text-red-600">
+              <XCircle size={14} className="mt-0.5 shrink-0" />
+              <span>导出失败：{error}</span>
+            </div>
+          )}
+          {done && (
+            <div className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-3 text-xs text-emerald-700">
+              <CheckCircle2 size={14} className="mt-0.5 shrink-0" />
+              <div className="min-w-0 space-y-0.5">
+                <p className="font-medium">导出成功</p>
+                <p className="break-all">{done.path}</p>
+                <p>{done.page_count} 页面 · {done.source_count} 源 · {done.file_count} 个文件 · {formatBytes(done.size_bytes)}</p>
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={onClose} className="action-secondary">关闭</button>
+          <button onClick={handleExport} disabled={busy || projects.length === 0} className="action-primary">
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+            {busy ? "导出中..." : "开始导出"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Wiki 导入弹窗：选 zip 备份 → 恢复为新项目（不覆盖现有数据） ────────
+function WikiImportDialog({ onClose, onImported }: { onClose: () => void; onImported: () => void }) {
+  const [picked, setPicked] = useState<{ label: string; path?: string; base64?: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<WikiImportResult | null>(null);
+
+  // 弹窗期间锁定页面滚动（关闭时恢复）
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = ""; };
+  }, []);
+
+  const handlePickFile = async () => {
+    setError(null);
+    try {
+      if (isTauriRuntime()) {
+        const path = await wikiApi.pickImportFile();
+        if (path) setPicked({ label: path.split(/[\\/]/).pop() || path, path });
+      } else {
+        const pickedFile = await pickFileAsBase64(".zip,application/zip");
+        if (pickedFile) setPicked({ label: pickedFile.name, base64: pickedFile.base64 });
+      }
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const handleImport = async () => {
+    if (!picked) { setError("请先选择要导入的 zip 备份文件"); return; }
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const res = picked.path
+        ? await wikiApi.importBackup(picked.path)
+        : await wikiApi.importBackupBytes(picked.base64 || "");
+      setDone(res);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="relative w-full max-w-lg rounded-3xl bg-white p-7 shadow-2xl max-h-[70vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <button onClick={onClose} className="absolute right-5 top-5 rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+          <XCircle className="h-5 w-5" />
+        </button>
+        <div className="flex items-center gap-2">
+          <div className="rounded-2xl border border-violet-100 bg-violet-50 p-2.5">
+            <FileArchive className="h-5 w-5 text-violet-600" />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">导入 Wiki 备份</h2>
+            <p className="text-xs text-slate-500">从导出 zip 恢复项目</p>
+          </div>
+        </div>
+        <div className="mt-5 space-y-4">
+          <div className="rounded-2xl border border-slate-100 px-4 py-3 text-[11px] text-slate-500 space-y-1">
+            <p>• 备份包含页面 MD、源文件、图片资产（token）与核心数据库记录，导入后可直接使用，无需重新摄入。</p>
+            <p>• 导入会创建为新项目（全新 ID），同名项目允许共存，不会覆盖任何现有数据。</p>
+            <p>• API Key 的 Wiki 查询授权不随备份恢复，导入后请在「密钥」页重新授权。</p>
+          </div>
+
+          <div className="flex gap-2">
+            <input
+              readOnly
+              value={picked?.label ?? ""}
+              placeholder={isTauriRuntime() ? "尚未选择备份文件" : "尚未选择备份文件（浏览器选择）"}
+              className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-600"
+            />
+            <button onClick={handlePickFile} disabled={busy} className="action-secondary shrink-0">
+              <FolderOpen size={16} />
+              选择文件
+            </button>
+          </div>
+
+          {error && (
+            <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-xs text-red-600">
+              <XCircle size={14} className="mt-0.5 shrink-0" />
+              <span>导入失败：{error}</span>
+            </div>
+          )}
+          {done && (
+            <div className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-3 text-xs text-emerald-700">
+              <CheckCircle2 size={14} className="mt-0.5 shrink-0" />
+              <div className="min-w-0 space-y-0.5">
+                <p className="font-medium">导入成功：已恢复为项目「{done.project_name}」</p>
+                <p>{done.page_count} 页面 · {done.source_count} 源 · {done.file_count} 个文件（含图片与 token）</p>
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          {done ? (
+            <button onClick={onImported} className="action-primary">
+              <Check className="h-4 w-4" />
+              完成
+            </button>
+          ) : (
+            <>
+              <button onClick={onClose} className="action-secondary">取消</button>
+              <button onClick={handleImport} disabled={busy || !picked} className="action-primary">
+                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                {busy ? "导入中..." : "开始导入"}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -3871,18 +4446,20 @@ function CreateWikiProjectModal({ onClose, onCreated }: { onClose: () => void; o
           <div className="rounded-2xl border border-slate-100 p-4">
             <label className="mb-1.5 block text-xs font-medium text-slate-700">推理档位（思考级别）</label>
             <p className="mb-2 text-[11px] text-slate-400">摄入与问答使用的 LLM 推理档位，选择后自动联动 thinking 参数。未配置或选 default 时跟随模型默认。</p>
-            <select
+            <Select
               value={reasoningEffort}
-              onChange={e => setReasoningEffort(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm"
-            >
-              <option value="">跟随模型默认（不写档位/thinking）</option>
-              <option value="default">default（模型默认）</option>
-              <option value="none">none（关闭推理）</option>
-              <option value="low">low</option>
-              <option value="medium">medium</option>
-              <option value="high">high</option>
-            </select>
+              onChange={v => setReasoningEffort(v)}
+              size="sm"
+              ariaLabel="推理档位（思考级别）"
+              options={[
+                { value: "", label: "跟随模型默认（不写档位/thinking）" },
+                { value: "default", label: "default（模型默认）" },
+                { value: "none", label: "none（关闭推理）" },
+                { value: "low", label: "low" },
+                { value: "medium", label: "medium" },
+                { value: "high", label: "high" },
+              ]}
+            />
           </div>
           <div>
             <label className="mb-1.5 block text-xs font-medium text-slate-700">Wiki Schema (CLAUDE.md)</label>
@@ -5402,18 +5979,20 @@ function WikiSettingsTab({ project, onUpdated }: { project: WikiProject; onUpdat
           <div>
             <label className="mb-1.5 block text-xs font-medium text-slate-700">推理档位（思考级别）</label>
             <p className="mb-2 text-[11px] text-slate-400">摄入与问答使用的 LLM 推理档位。未配置或选 default 时不写档位字段与 thinking，完全跟随模型默认（对严格校验的上游最安全）；显式选择档位时自动联动 thinking。</p>
-            <select
+            <Select
               value={reasoningEffort}
-              onChange={e => setReasoningEffort(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm"
-            >
-              <option value="">跟随模型默认（不写档位/thinking）</option>
-              <option value="default">default（模型默认）</option>
-              <option value="none">none（关闭推理）</option>
-              <option value="low">low</option>
-              <option value="medium">medium</option>
-              <option value="high">high</option>
-            </select>
+              onChange={v => setReasoningEffort(v)}
+              size="sm"
+              ariaLabel="推理档位（思考级别）"
+              options={[
+                { value: "", label: "跟随模型默认（不写档位/thinking）" },
+                { value: "default", label: "default（模型默认）" },
+                { value: "none", label: "none（关闭推理）" },
+                { value: "low", label: "low" },
+                { value: "medium", label: "medium" },
+                { value: "high", label: "high" },
+              ]}
+            />
           </div>
           <div>
             <label className="mb-1.5 block text-xs font-medium text-slate-700">温度（0~2）</label>
