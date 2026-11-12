@@ -11,7 +11,8 @@ import type {
 import {
   PROTOCOL_LABELS, ENDPOINT_LABELS, ENDPOINT_PATHS,
 } from "../lib/constants";
-import { X, Plus, Check, RefreshCw, KeyRound, Undo, Loader2, Trash2, Power, Copy, Terminal, ChevronDown } from "lucide-react";
+import { X, Plus, Check, RefreshCw, KeyRound, Undo, Loader2, Trash2, Power, Copy, Terminal, ChevronDown, ExternalLink } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { parseCurlToChannel } from "../lib/curl";
 import { Select } from "./Select";
 import { MappingSection } from "./MappingSection";
@@ -318,7 +319,20 @@ export function ChannelForm({ editing, duplicate = false, onClose, onSaved }: {
     return group?.presets.find(p => p.provider === provider) ?? null;
   }
 
+  /**
+   * 免费渠道的主 Key 预填值：选中预设时自动填充，零配置即用。
+   * - opencode：上游固定公开令牌 `public`；
+   * - kilo：免费池免 Key，预填空串（清掉可能残留的占位值）。
+   * 返回 null 表示该渠道不参与自动填充（保留用户输入）。
+   */
+  function freeLaneKey(provider: ChannelProvider): string | null {
+    if (provider === "opencode") return "public";
+    if (provider === "kilo") return "";
+    return null;
+  }
+
   function applyPreset(preset: ChannelPreset, apply: boolean) {
+    const laneKey = apply ? freeLaneKey(preset.provider) : null;
     setForm(prev => {
       let name = prev.name;
       if (apply && preset.provider !== "custom" && !nameTouched) {
@@ -328,9 +342,16 @@ export function ChannelForm({ editing, duplicate = false, onClose, onSaved }: {
           autoNameRef.current = preset.display_name;
         }
       }
+      // 免费渠道 Key 自动填充：仅在当前为空、或已是另一免费车道填充值
+      // （public）时改写，绝不覆盖用户手填的真实 Key。
+      let api_key = prev.api_key;
+      if (laneKey !== null && (prev.api_key.trim() === "" || prev.api_key.trim() === "public")) {
+        api_key = laneKey;
+      }
       return {
         ...prev,
         name,
+        api_key,
         protocol: preset.protocol,
         provider: preset.provider,
         preset_revision: preset.preset_revision,
@@ -342,6 +363,7 @@ export function ChannelForm({ editing, duplicate = false, onClose, onSaved }: {
         } : {}),
       };
     });
+    if (laneKey !== null) setClearKeyRequested(false);
     invalidateReceipt();
   }
 
@@ -1063,6 +1085,26 @@ export function ChannelForm({ editing, duplicate = false, onClose, onSaved }: {
               )}
             </div>
 
+            {/* 免费层渠道：Key 配置上方提供「获取 API Key」跳转（key_signup_url
+                由后端 preset 下发，点击经系统浏览器打开官方控制台）。 */}
+            {currentPreset?.key_signup_url && (
+              <div className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-primary/25 bg-primary/8 px-3.5 py-2.5">
+                <span className="text-xs text-muted-foreground">
+                  免费层渠道：注册后在官方控制台领取 API Key，粘贴到下方即可使用（免费额度有限，超额会被上游限流）。
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const url = currentPreset.key_signup_url;
+                    if (url) void openUrl(url);
+                  }}
+                  className="flex shrink-0 items-center gap-1 rounded-lg border border-primary/30 bg-primary/12 px-2.5 py-1.5 text-xs font-medium text-primary transition-all hover:bg-primary/20"
+                  title="在系统浏览器中打开官方 Key 管理页"
+                >
+                  前往获取 API Key <ExternalLink size={12} />
+                </button>
+              </div>
+            )}
             {/* API Keys（负载均衡）：主 Key（#1）+ 额外 Keys 统一管理 */}
             <div className="mt-4">
               <div className="mb-2 flex items-center justify-between">
@@ -1094,7 +1136,13 @@ export function ChannelForm({ editing, duplicate = false, onClose, onSaved }: {
                         value={form.api_key}
                         onChange={e => onKeyChange(e.target.value)}
                         className="min-w-0 flex-1 rounded-lg border border-border bg-background/70 px-3 py-2 text-sm font-mono"
-                        placeholder={(editing && !duplicate) ? (clearKeyRequested ? "将清除已保存的 Key" : "留空则不修改") : keyRequired ? "sk-..." : "可留空（本地/自管 Ollama）"}
+                        placeholder={(editing && !duplicate)
+                          ? (clearKeyRequested ? "将清除已保存的 Key" : "留空则不修改")
+                          : form.provider === "opencode"
+                            ? "已自动填入公开令牌 public"
+                            : form.provider === "kilo"
+                              ? "无需 Key，留空即可"
+                              : keyRequired ? "sk-..." : "可留空（本地/自管 Ollama）"}
                         autoCapitalize="none"
                         autoComplete="off"
                         spellCheck={false}
@@ -1180,7 +1228,13 @@ export function ChannelForm({ editing, duplicate = false, onClose, onSaved }: {
                   {form.protocol === "ollama" && (
                     <p className="mt-1.5 text-xs text-muted-foreground">Ollama 本地默认无 API Key，可留空；远程反向代理可填写。</p>
                   )}
-                  {!keyRequired && form.protocol !== "ollama" && (
+                  {form.provider === "opencode" && (
+                    <p className="mt-1.5 text-xs text-muted-foreground">OpenCode 免费车道无需注册，主 Key 已自动填入公开令牌 public。</p>
+                  )}
+                  {form.provider === "kilo" && (
+                    <p className="mt-1.5 text-xs text-muted-foreground">Kilo 免费池免 Key 免登录，API Key 留空即可；上游可能记录请求内容，请勿发送敏感信息。</p>
+                  )}
+                  {!keyRequired && form.protocol !== "ollama" && form.provider !== "kilo" && (
                     <p className="mt-1.5 text-xs text-muted-foreground">该提供商为可选鉴权（如 Ollama 接口），API Key 可留空。</p>
                   )}
                 </div>

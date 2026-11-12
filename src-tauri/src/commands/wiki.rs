@@ -532,16 +532,11 @@ pub async fn pick_wiki_export_dir(app: tauri::AppHandle) -> Result<Option<String
         use tauri_plugin_dialog::DialogExt;
 
         let (tx, rx) = tokio::sync::oneshot::channel();
-        app.dialog()
-            .file()
-            .pick_folder(move |folder_path| {
-                let result = folder_path.and_then(|f| {
-                    f.into_path()
-                        .ok()
-                        .map(|p| p.to_string_lossy().to_string())
-                });
-                let _ = tx.send(result);
-            });
+        app.dialog().file().pick_folder(move |folder_path| {
+            let result = folder_path
+                .and_then(|f| f.into_path().ok().map(|p| p.to_string_lossy().to_string()));
+            let _ = tx.send(result);
+        });
         let result = rx.await.map_err(|_| "对话框取消".to_string())?;
         Ok(result)
     }
@@ -564,14 +559,37 @@ pub async fn pick_wiki_import_file(app: tauri::AppHandle) -> Result<Option<Strin
             .file()
             .add_filter("Wiki 备份", &["zip"])
             .pick_file(move |file_path| {
-                let result = file_path.and_then(|f| {
-                    f.into_path()
-                        .ok()
-                        .map(|p| p.to_string_lossy().to_string())
-                });
+                let result = file_path
+                    .and_then(|f| f.into_path().ok().map(|p| p.to_string_lossy().to_string()));
                 let _ = tx.send(result);
             });
         let result = rx.await.map_err(|_| "对话框取消".to_string())?;
         Ok(result)
     }
+}
+
+/// 重建 Wiki 目录：mode = "program"（程序化分组，零 LLM、毫秒级）| "llm"（语义归组，耗一次 LLM）。
+/// 两种模式都会先做 log 一致性检测 + 一次性回溯（老项目 log 缺失时修复）。
+#[tauri::command]
+pub async fn rebuild_wiki_index(
+    state: State<'_, Arc<AppState>>,
+    project_id: String,
+    mode: String,
+    model: Option<String>,
+) -> Result<serde_json::Value, String> {
+    use crate::services::wiki::rebuild;
+    let pool = state.db.pool.clone();
+    let log_rebuilt = rebuild::ensure_log_rebuilt(&pool, &project_id).await?;
+    let page_count = match mode.as_str() {
+        "llm" => {
+            rebuild::rebuild_index_with_llm(&state.settings, &pool, &project_id, model.as_deref())
+                .await?
+        }
+        _ => rebuild::rebuild_index_programmatic(&pool, &project_id).await?,
+    };
+    Ok(serde_json::json!({
+        "mode": if mode == "llm" { "llm" } else { "program" },
+        "page_count": page_count,
+        "log_rebuilt": log_rebuilt,
+    }))
 }
